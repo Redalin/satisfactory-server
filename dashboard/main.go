@@ -191,6 +191,12 @@ func (app *ServerApp) sampleMetrics() {
 
 	// 5. Update cached state
 	lastSave := app.logParser.GetLastSave()
+	if diskSave := app.savesScanner.GetLatestSave(); diskSave != nil {
+		if lastSave.LastSaveTime.IsZero() || diskSave.ModTime.After(lastSave.LastSaveTime) {
+			lastSave.LastSaveTime = diskSave.ModTime
+			lastSave.SaveName = diskSave.Name
+		}
+	}
 
 	app.mu.Lock()
 	app.lastState = ServerStateSummary{
@@ -223,6 +229,14 @@ func (app *ServerApp) handleStats(w http.ResponseWriter, r *http.Request) {
 	app.mu.RLock()
 	state := app.lastState
 	app.mu.RUnlock()
+
+	// Ensure lastSave has latest disk save if logs have not recorded one yet
+	if state.LastSave.LastSaveTime.IsZero() {
+		if diskSave := app.savesScanner.GetLatestSave(); diskSave != nil {
+			state.LastSave.LastSaveTime = diskSave.ModTime
+			state.LastSave.SaveName = diskSave.Name
+		}
+	}
 
 	// Supply history for the requested time range (1h, 24h, 7d, 30d)
 	state.History = app.collector.GetHistory(timeRange)

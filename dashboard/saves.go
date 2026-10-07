@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -11,106 +12,88 @@ import (
 
 // SaveFileInfo represents metadata about a saved game file
 type SaveFileInfo struct {
-	Name         string    `json:"name"`
-	SizeMB       float64   `json:"sizeMB"`
-	SizeHuman    string    `json:"sizeHuman"`
-	ModTime      time.Time `json:"modTime"`
-	ModTimeString string   `json:"modTimeString"`
-	TimeAgo      string    `json:"timeAgo"`
-	IsBackup     bool      `json:"isBackup"`
+	Name          string    `json:"name"`
+	SizeMB        float64   `json:"sizeMB"`
+	SizeHuman     string    `json:"sizeHuman"`
+	ModTime       time.Time `json:"modTime"`
+	ModTimeString string    `json:"modTimeString"`
+	TimeAgo       string    `json:"timeAgo"`
+	IsBackup      bool      `json:"isBackup"`
+	Path          string    `json:"path"`
 }
 
 // SavesScanner inspects disk saves and backups
 type SavesScanner struct {
-	saveDirs   []string
-	backupDirs []string
+	searchRoots []string
 }
 
-// NewSavesScanner creates a new scanner with default Satisfactory save paths
+// NewSavesScanner creates a new scanner with root directories to search for saves
 func NewSavesScanner() *SavesScanner {
 	return &SavesScanner{
-		saveDirs: []string{
-			"/config/saved/server",
+		searchRoots: []string{
 			"/config/saved",
-			"./satisfactory-server/saved/server",
-			"./satisfactory-server/saved",
-		},
-		backupDirs: []string{
 			"/config/backups",
+			"/config",
+			"./satisfactory-server/saved",
 			"./satisfactory-server/backups",
+			"./satisfactory-server",
 		},
 	}
 }
 
-// ListSaves returns sorted list of save files (newest first)
+// ListSaves returns sorted list of all save files (newest first)
 func (s *SavesScanner) ListSaves(limit int) []SaveFileInfo {
 	if limit <= 0 {
 		limit = 10
 	}
 
-	var results []SaveFileInfo
+	resultsMap := make(map[string]SaveFileInfo)
 
-	// Scan primary save dirs
-	for _, dir := range s.saveDirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
+	for _, root := range s.searchRoots {
+		if _, err := os.Stat(root); err != nil {
 			continue
 		}
 
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sav") {
-				continue
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d == nil || d.IsDir() {
+				return nil
 			}
 
-			info, err := entry.Info()
+			nameLower := strings.ToLower(d.Name())
+			if !strings.HasSuffix(nameLower, ".sav") && !strings.HasSuffix(nameLower, ".zip") {
+				return nil
+			}
+
+			info, err := d.Info()
 			if err != nil {
-				continue
+				return nil
 			}
 
+			isBackup := strings.Contains(strings.ToLower(path), "backup")
 			sizeMB := round2(float64(info.Size()) / (1024 * 1024))
-			results = append(results, SaveFileInfo{
-				Name:          entry.Name(),
+
+			resultsMap[path] = SaveFileInfo{
+				Name:          d.Name(),
 				SizeMB:        sizeMB,
 				SizeHuman:     formatBytes(info.Size()),
 				ModTime:       info.ModTime(),
 				ModTimeString: info.ModTime().Format("2006-01-02 15:04:05"),
 				TimeAgo:       timeAgo(info.ModTime()),
-				IsBackup:      false,
-			})
-		}
+				IsBackup:      isBackup,
+				Path:          path,
+			}
+			return nil
+		})
 
-		if len(results) > 0 {
-			break // found active directory
+		// If saves were found in primary /config/saved or /config, stop to avoid duplicate scanning
+		if len(resultsMap) > 0 && strings.HasPrefix(root, "/config") {
+			break
 		}
 	}
 
-	// Scan backups
-	for _, dir := range s.backupDirs {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			info, err := entry.Info()
-			if err != nil {
-				continue
-			}
-
-			sizeMB := round2(float64(info.Size()) / (1024 * 1024))
-			results = append(results, SaveFileInfo{
-				Name:          filepath.Base(entry.Name()),
-				SizeMB:        sizeMB,
-				SizeHuman:     formatBytes(info.Size()),
-				ModTime:       info.ModTime(),
-				ModTimeString: info.ModTime().Format("2006-01-02 15:04:05"),
-				TimeAgo:       timeAgo(info.ModTime()),
-				IsBackup:      true,
-			})
-		}
+	var results []SaveFileInfo
+	for _, item := range resultsMap {
+		results = append(results, item)
 	}
 
 	// Sort newest first
@@ -123,6 +106,20 @@ func (s *SavesScanner) ListSaves(limit int) []SaveFileInfo {
 	}
 
 	return results
+}
+
+// GetLatestSave returns the most recently modified save file on disk
+func (s *SavesScanner) GetLatestSave() *SaveFileInfo {
+	all := s.ListSaves(10)
+	for _, item := range all {
+		if !item.IsBackup && strings.HasSuffix(strings.ToLower(item.Name), ".sav") {
+			return &item
+		}
+	}
+	if len(all) > 0 {
+		return &all[0]
+	}
+	return nil
 }
 
 func formatBytes(bytes int64) string {
@@ -154,4 +151,3 @@ func timeAgo(t time.Time) string {
 	d := int(diff.Hours() / 24)
 	return fmt.Sprintf("%dd ago", d)
 }
-

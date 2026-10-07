@@ -1227,18 +1227,32 @@
       }
 
       // Last Save Info
-      if (data.lastSave) {
-        if (data.lastSave.lastSaveTime && data.lastSave.lastSaveTime !== "0001-01-01T00:00:00Z") {
-          const saveDate = new Date(data.lastSave.lastSaveTime);
-          const diffMin = Math.round((Date.now() - saveDate.getTime()) / 60000);
-          document.getElementById('valSaveAgo').textContent = diffMin < 1 ? 'Just now' : diffMin + 'm ago';
+      // Last Save Info
+      if (data.lastSave && data.lastSave.lastSaveTime && data.lastSave.lastSaveTime !== "0001-01-01T00:00:00Z") {
+        const saveDate = new Date(data.lastSave.lastSaveTime);
+        const diffMs = Date.now() - saveDate.getTime();
+        const diffMin = Math.round(diffMs / 60000);
+        if (diffMin < 1) {
+          document.getElementById('valSaveAgo').textContent = 'Just now';
+        } else if (diffMin < 60) {
+          document.getElementById('valSaveAgo').textContent = diffMin + 'm ago';
+        } else if (diffMin < 1440) {
+          document.getElementById('valSaveAgo').textContent = Math.floor(diffMin / 60) + 'h ago';
+        } else {
+          document.getElementById('valSaveAgo').textContent = Math.floor(diffMin / 1440) + 'd ago';
         }
         if (data.lastSave.durationSec > 0) {
           document.getElementById('valSaveDuration').textContent = 'Took ' + data.lastSave.durationSec.toFixed(2) + 's';
+        } else {
+          document.getElementById('valSaveDuration').textContent = 'Saved';
         }
         if (data.lastSave.saveName) {
           document.getElementById('valSaveFile').textContent = data.lastSave.saveName;
         }
+      } else {
+        document.getElementById('valSaveAgo').textContent = 'No saves yet';
+        document.getElementById('valSaveDuration').textContent = 'Ready';
+        document.getElementById('valSaveFile').textContent = 'Awaiting world save';
       }
 
       // History
@@ -1254,6 +1268,17 @@
       if (!saves || saves.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No saves found yet.</td></tr>';
         return;
+      }
+
+      // Fallback: If KPI card still says "Checking..." or "No saves yet", use the latest disk save
+      const topSave = saves.find(s => !s.isBackup) || saves[0];
+      if (topSave) {
+        const currentText = document.getElementById('valSaveAgo').textContent;
+        if (currentText === 'Checking...' || currentText === 'No saves yet') {
+          document.getElementById('valSaveAgo').textContent = topSave.timeAgo || 'Recent';
+          document.getElementById('valSaveFile').textContent = topSave.name;
+          document.getElementById('valSaveDuration').textContent = topSave.sizeHuman;
+        }
       }
 
       tbody.innerHTML = saves.map(s => `

@@ -53,9 +53,8 @@ var (
 	rePlayerLeave2 = regexp.MustCompile(`Closing connection for player\s*([^\r\n]+)`)
 	rePlayerLeave3 = regexp.MustCompile(`PlayerName:\s*([^,\]\r\n]+).*Close`)
 
-	reWorldSave = regexp.MustCompile(`World Save took\s+([0-9.]+)\s+seconds`)
-	reAutoSave  = regexp.MustCompile(`Autosave took\s+([0-9.]+)\s+seconds`)
-	reSaveTo    = regexp.MustCompile(`Saving to\s+([^\r\n]+)`)
+	reWorldSave = regexp.MustCompile(`(?i)(?:world save took|autosave took|save took)[:\s]+([0-9.]+)\s*seconds?`)
+	reSaveTo    = regexp.MustCompile(`(?i)(?:saving (?:world |game )?to|saved (?:world |game )?to|saving savegame)[:\s]+([^\r\n]+)`)
 
 	reServerAPI     = regexp.MustCompile(`Server API listening on\s*'([^']+)'`)
 	reHttpListener  = regexp.MustCompile(`Created new HttpListener on\s*([^\r\n]+)`)
@@ -262,20 +261,6 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 			TimeString: timeStr,
 			Category:   "save",
 			Message:    fmt.Sprintf("World save completed in %.2fs", sec),
-			Raw:        line,
-		}
-	}
-	if m := reAutoSave.FindStringSubmatch(msg); len(m) > 1 {
-		sec, _ := strconv.ParseFloat(m[1], 64)
-		p.lastSave = SaveInfo{
-			LastSaveTime: eventTime,
-			DurationSec:  sec,
-		}
-		return &LogEvent{
-			Timestamp:  eventTime,
-			TimeString: timeStr,
-			Category:   "save",
-			Message:    fmt.Sprintf("Autosave finished in %.2fs", sec),
 			Raw:        line,
 		}
 	}
