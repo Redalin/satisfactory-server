@@ -23,15 +23,15 @@ WORKDIR /app
 COPY --from=builder /satisfactory-dashboard /app/satisfactory-dashboard
 
 # Default environment variables
-ENV PORT=8080 \
+ENV PORT=3045 \
     SERVER_API_URL=https://satisfactory-server:7777 \
     TARGET_CONTAINER=satisfactory-server \
     POLL_INTERVAL=5
 
-EXPOSE 8080
+EXPOSE 3045
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-8080}/healthz" || exit 1
+  CMD wget --no-verbose --tries=1 --spider "http://127.0.0.1:${PORT:-3045}/healthz" || exit 1
 
 ENTRYPOINT ["/app/satisfactory-dashboard"]
 
