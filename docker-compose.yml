@@ -8,7 +8,7 @@ services:
       - '7777:7777/udp'
       - '8888:8888/tcp'
     volumes:
-      - './satisfactory-server:/config'
+      - './satisfactory-server:/config:z'
     environment:
       - MAXPLAYERS=4
       - PGID=1000
@@ -21,3 +21,31 @@ services:
           memory: 8G
         reservations:
           memory: 4G
+
+  satisfactory-dashboard:
+    container_name: 'satisfactory-dashboard'
+    build:
+      context: ./dashboard
+    ports:
+      - '8080:8080'
+    volumes:
+      # Read-only mount of the server config directory for log tailing and save game scanning
+      - './satisfactory-server:/config:ro,z'
+      # Optional: Mount Docker/Podman socket if you have it enabled for container-level stats
+      # - '/var/run/docker.sock:/var/run/docker.sock:ro'
+    environment:
+      - PORT=8080
+      - SERVER_API_URL=https://satisfactory-server:7777
+      - TARGET_CONTAINER=satisfactory-server
+      - POLL_INTERVAL=5
+      # Optional: Provide an API token from `server.GenerateAPIToken` for authenticated server state
+      # - API_TOKEN=
+    depends_on:
+      - satisfactory-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M

@@ -1,0 +1,42 @@
+# Satisfactory server data and config directory (contains gamefiles, saves, logs, and backups)
+satisfactory-server/
+
+# Game saves, backups, and blueprints
+*.sav
+*.bak
+backups/
+saved/
+gamefiles/
+
+# Server and engine logs
+*.log
+logs/
+# Preserve committed example log if needed
+!server.log
+
+# Go build artifacts (if compiled locally)
+satisfactory-dashboard
+dashboard/satisfactory-dashboard
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Environment and local secret files
+.env
+.env.local
+*.pp
+*.te
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+

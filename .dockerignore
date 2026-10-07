@@ -1,0 +1,40 @@
+# Git and version control
+.git
+.gitignore
+.github
+
+# Game files, saves, backups, and logs
+satisfactory-server/
+gamefiles/
+saved/
+backups/
+*.sav
+*.bak
+*.log
+logs/
+
+# Documentation and cluster files
+cluster/
+ssl/
+README.md
+LICENSE
+
+# Local binaries and build artifacts
+satisfactory-dashboard
+dashboard/satisfactory-dashboard
+*.exe
+*.test
+*.out
+
+# Environment and secrets
+.env
+.env.local
+*.pp
+*.te
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

@@ -1,0 +1,17 @@
+# Local Go build artifacts
+satisfactory-dashboard
+*.exe
+*.test
+*.out
+
+# Documentation and git files
+README.md
+.git
+.gitignore
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
