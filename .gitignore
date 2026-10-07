@@ -1,5 +1,5 @@
 # Satisfactory server data and config directory (contains gamefiles, saves, logs, and backups)
-satisfactory-server/
+satisfactory-data/
 
 # Game saves, backups, and blueprints
 *.sav

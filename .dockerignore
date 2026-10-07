@@ -4,7 +4,7 @@
 .github
 
 # Game files, saves, backups, and logs
-satisfactory-server/
+satisfactory-data    /
 gamefiles/
 saved/
 backups/

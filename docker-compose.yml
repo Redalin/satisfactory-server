@@ -8,7 +8,7 @@ services:
       - '7777:7777/udp'
       - '8888:8888/tcp'
     volumes:
-      - './satisfactory-server:/config:z'
+      - './satisfactory-data:/config:z'
     environment:
       - MAXPLAYERS=4
       - PGID=1000
@@ -30,7 +30,7 @@ services:
       - '8080:8080'
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
-      - './satisfactory-server:/config:ro,z'
+      - './satisfactory-data:/config:ro,z'
       # Optional: Mount Docker/Podman socket if you have it enabled for container-level stats
       # - '/var/run/docker.sock:/var/run/docker.sock:ro'
     environment:
@@ -49,3 +49,7 @@ services:
           memory: 64M
         reservations:
           memory: 16M
+
+volumes:
+  satisfactory-data:
+    name: satisfactory-data          
