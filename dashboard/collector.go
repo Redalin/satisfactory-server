@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,33 +19,31 @@ import (
 
 // MetricPoint represents resource utilization at a point in time
 type MetricPoint struct {
-	Timestamp        time.Time `json:"timestamp"`
-	CPUPercent       float64   `json:"cpuPercent"`
-	MemoryUsedMB     float64   `json:"memoryUsedMB"`
-	MemoryLimitMB    float64   `json:"memoryLimitMB"`
-	MemoryPercent    float64   `json:"memoryPercent"`
-	PlayerCount      int       `json:"playerCount"`
-	ServerHealthy    bool      `json:"serverHealthy"`
+	Timestamp     time.Time `json:"timestamp"`
+	CPUPercent    float64   `json:"cpuPercent"`
+	MemoryUsedMB  float64   `json:"memoryUsedMB"`
+	MemoryLimitMB float64   `json:"memoryLimitMB"`
+	MemoryPercent float64   `json:"memoryPercent"`
+	PlayerCount   int       `json:"playerCount"`
+	ServerHealthy bool      `json:"serverHealthy"`
 }
 
-// Collector periodically samples CPU, memory, and status metrics
+// Collector periodically samples CPU, memory, and status metrics with 30-day retention
 type Collector struct {
-	mu             sync.RWMutex
-	history        []MetricPoint
-	maxHistory     int
-	containerName  string
-	dockerClient   *http.Client
-	hasDockerSock  bool
-	prevHostTotal  uint64
-	prevHostIdle   uint64
+	mu              sync.RWMutex
+	recentHistory   []MetricPoint // High-res buffer for the last ~1-2 hours (~720 points)
+	longTermHistory []MetricPoint // Long-term history (downsampled to ~5-15 min buckets, retained for 30 days)
+	containerName   string
+	dataFilePath    string
+	dockerClient    *http.Client
+	hasDockerSock   bool
+	prevHostTotal   uint64
+	prevHostIdle    uint64
+	lastLongTermAdd time.Time
 }
 
-// NewCollector initializes the resource collector
-func NewCollector(containerName string, maxHistory int) *Collector {
-	if maxHistory <= 0 {
-		maxHistory = 180 // ~15-30 minutes of historical data
-	}
-
+// NewCollector initializes the resource collector with 30-day tiered retention
+func NewCollector(containerName, dataDir string) *Collector {
 	_, err := os.Stat("/var/run/docker.sock")
 	hasSock := err == nil
 
@@ -58,34 +59,109 @@ func NewCollector(containerName string, maxHistory int) *Collector {
 		}
 	}
 
-	return &Collector{
-		history:       make([]MetricPoint, 0, maxHistory),
-		maxHistory:    maxHistory,
-		containerName: containerName,
-		dockerClient:  dClient,
-		hasDockerSock: hasSock,
+	// Determine data storage directory
+	if dataDir == "" {
+		dataDir = "/data"
 	}
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		// Fallback to local ./data or /tmp if /data is not writable
+		dataDir = "./data"
+		if err := os.MkdirAll(dataDir, 0755); err != nil {
+			dataDir = "/tmp"
+		}
+	}
+	dataPath := filepath.Join(dataDir, "metrics_history.json")
+
+	c := &Collector{
+		recentHistory:   make([]MetricPoint, 0, 720),
+		longTermHistory: make([]MetricPoint, 0, 4500), // ~30 days @ 10-minute intervals
+		containerName:   containerName,
+		dataFilePath:    dataPath,
+		dockerClient:    dClient,
+		hasDockerSock:   hasSock,
+	}
+
+	c.loadHistoryFromDisk()
+	return c
 }
 
-// AddPoint appends a metric point and maintains maxHistory capacity
+// loadHistoryFromDisk loads existing 30-day metrics on startup
+func (c *Collector) loadHistoryFromDisk() {
+	data, err := os.ReadFile(c.dataFilePath)
+	if err != nil {
+		return
+	}
+
+	var loaded []MetricPoint
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		log.Printf("[Collector] Warning: could not parse existing %s: %v", c.dataFilePath, err)
+		return
+	}
+
+	// Filter out points older than 30 days
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	valid := make([]MetricPoint, 0, len(loaded))
+	for _, pt := range loaded {
+		if pt.Timestamp.After(cutoff) {
+			valid = append(valid, pt)
+		}
+	}
+
+	c.longTermHistory = valid
+	log.Printf("[Collector] Loaded %d historical metric points from %s", len(valid), c.dataFilePath)
+}
+
+// SaveHistoryToDisk persists long-term history to disk atomically
+func (c *Collector) SaveHistoryToDisk() {
+	c.mu.RLock()
+	dataCopy := make([]MetricPoint, len(c.longTermHistory))
+	copy(dataCopy, c.longTermHistory)
+	c.mu.RUnlock()
+
+	if len(dataCopy) == 0 {
+		return
+	}
+
+	encoded, err := json.Marshal(dataCopy)
+	if err != nil {
+		return
+	}
+
+	tmpFile := c.dataFilePath + ".tmp"
+	if err := os.WriteFile(tmpFile, encoded, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmpFile, c.dataFilePath)
+}
+
+// AddPoint records a metric point and manages tiered aggregation for up to 30 days
 func (c *Collector) AddPoint(p MetricPoint) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if len(c.history) >= c.maxHistory {
-		c.history = c.history[1:]
+	// 1. High-resolution recent buffer (last ~1 hour, up to 720 points @ 5s)
+	if len(c.recentHistory) >= 720 {
+		c.recentHistory = c.recentHistory[1:]
 	}
-	c.history = append(c.history, p)
-}
+	c.recentHistory = append(c.recentHistory, p)
 
-// GetHistory returns a copy of historical metrics
-func (c *Collector) GetHistory() []MetricPoint {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	// 2. Long-term buffer (every 5 minutes or first point)
+	now := p.Timestamp
+	if c.lastLongTermAdd.IsZero() || now.Sub(c.lastLongTermAdd) >= 5*time.Minute {
+		c.lastLongTermAdd = now
 
-	out := make([]MetricPoint, len(c.history))
-	copy(out, c.history)
-	return out
+		// Remove points older than 30 days
+		cutoff := now.Add(-30 * 24 * time.Hour)
+		if len(c.longTermHistory) > 0 && c.longTermHistory[0].Timestamp.Before(cutoff) {
+			idx := 0
+			for idx < len(c.longTermHistory) && c.longTermHistory[idx].Timestamp.Before(cutoff) {
+				idx++
+			}
+			c.longTermHistory = c.longTermHistory[idx:]
+		}
+
+		c.longTermHistory = append(c.longTermHistory, p)
+	}
 }
 
 // GetLatest returns the most recent metric point
@@ -93,10 +169,136 @@ func (c *Collector) GetLatest() (MetricPoint, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if len(c.history) == 0 {
+	if len(c.recentHistory) == 0 {
 		return MetricPoint{}, false
 	}
-	return c.history[len(c.history)-1], true
+	return c.recentHistory[len(c.recentHistory)-1], true
+}
+
+// GetHistory returns historical metrics downsampled for the requested timescale ("1h", "24h", "7d", "30d")
+func (c *Collector) GetHistory(timeRange string) []MetricPoint {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	now := time.Now()
+	var duration time.Duration
+	var targetPoints int
+
+	switch timeRange {
+	case "24h", "1d":
+		duration = 24 * time.Hour
+		targetPoints = 120
+	case "7d", "1w":
+		duration = 7 * 24 * time.Hour
+		targetPoints = 140
+	case "30d", "1m":
+		duration = 30 * 24 * time.Hour
+		targetPoints = 150
+	case "1h":
+		fallthrough
+	default:
+		duration = 1 * time.Hour
+		targetPoints = 120
+	}
+
+	cutoff := now.Add(-duration)
+
+	// If 1h is requested and recentHistory has sufficient points, use high-res recent history
+	if duration <= 1*time.Hour && len(c.recentHistory) > 0 {
+		var filtered []MetricPoint
+		for _, pt := range c.recentHistory {
+			if pt.Timestamp.After(cutoff) {
+				filtered = append(filtered, pt)
+			}
+		}
+		if len(filtered) > targetPoints {
+			return downsample(filtered, targetPoints)
+		}
+		return filtered
+	}
+
+	// For longer time ranges, combine longTermHistory and recentHistory
+	mergedMap := make(map[int64]MetricPoint)
+	for _, pt := range c.longTermHistory {
+		if pt.Timestamp.After(cutoff) {
+			mergedMap[pt.Timestamp.Unix()] = pt
+		}
+	}
+	// Also include recent points so current moments are included
+	for _, pt := range c.recentHistory {
+		if pt.Timestamp.After(cutoff) {
+			mergedMap[pt.Timestamp.Unix()] = pt
+		}
+	}
+
+	combined := make([]MetricPoint, 0, len(mergedMap))
+	for _, pt := range mergedMap {
+		combined = append(combined, pt)
+	}
+
+	sort.Slice(combined, func(i, j int) bool {
+		return combined[i].Timestamp.Before(combined[j].Timestamp)
+	})
+
+	if len(combined) <= targetPoints {
+		return combined
+	}
+
+	return downsample(combined, targetPoints)
+}
+
+// downsample groups data points into buckets to maintain fast rendering across long timescales
+func downsample(pts []MetricPoint, targetCount int) []MetricPoint {
+	if len(pts) <= targetCount || targetCount <= 0 {
+		return pts
+	}
+
+	result := make([]MetricPoint, 0, targetCount)
+	bucketSize := float64(len(pts)) / float64(targetCount)
+
+	for i := 0; i < targetCount; i++ {
+		startIdx := int(float64(i) * bucketSize)
+		endIdx := int(float64(i+1) * bucketSize)
+		if endIdx > len(pts) {
+			endIdx = len(pts)
+		}
+		if startIdx >= endIdx {
+			continue
+		}
+
+		var sumCPU, sumMemMB, sumMemLimit, sumMemPercent float64
+		maxPlayers := 0
+		healthy := true
+		count := float64(endIdx - startIdx)
+
+		for j := startIdx; j < endIdx; j++ {
+			p := pts[j]
+			sumCPU += p.CPUPercent
+			sumMemMB += p.MemoryUsedMB
+			sumMemLimit += p.MemoryLimitMB
+			sumMemPercent += p.MemoryPercent
+			if p.PlayerCount > maxPlayers {
+				maxPlayers = p.PlayerCount
+			}
+			if !p.ServerHealthy {
+				healthy = false
+			}
+		}
+
+		// Use middle timestamp of bucket
+		midIdx := startIdx + (endIdx-startIdx)/2
+		result = append(result, MetricPoint{
+			Timestamp:     pts[midIdx].Timestamp,
+			CPUPercent:    round2(sumCPU / count),
+			MemoryUsedMB:  round2(sumMemMB / count),
+			MemoryLimitMB: round2(sumMemLimit / count),
+			MemoryPercent: round2(sumMemPercent / count),
+			PlayerCount:   maxPlayers,
+			ServerHealthy: healthy,
+		})
+	}
+
+	return result
 }
 
 // CollectStats gathers current stats from Docker socket or system fallbacks
@@ -190,7 +392,6 @@ func (c *Collector) collectFromDocker() (float64, float64, float64, error) {
 
 	// Memory
 	used := stats.MemoryStats.Usage
-	// Remove page cache or inactive file if available
 	cache := stats.MemoryStats.Stats.InactiveFile
 	if cache == 0 {
 		cache = stats.MemoryStats.Stats.Cache
@@ -206,7 +407,6 @@ func (c *Collector) collectFromDocker() (float64, float64, float64, error) {
 }
 
 func (c *Collector) collectFromSystem() (float64, float64, float64) {
-	// Attempt to read cgroup v2 / v1 memory
 	var memUsedMB, memLimitMB float64
 
 	// cgroup v2
@@ -263,7 +463,7 @@ func (c *Collector) readProcStatCPU() float64 {
 	for i := 1; i < len(fields); i++ {
 		val, _ := strconv.ParseUint(fields[i], 10, 64)
 		total += val
-		if i == 4 { // idle is 4th field after "cpu"
+		if i == 4 {
 			idle = val
 		}
 	}
@@ -317,4 +517,3 @@ func readProcMeminfo() (totalMB, availMB float64) {
 func round2(val float64) float64 {
 	return float64(int(val*100+0.5)) / 100
 }
-

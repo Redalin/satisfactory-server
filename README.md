@@ -134,8 +134,9 @@ services:
 This repository includes a lightweight, read-only web dashboard written in Go (`./dashboard`) that runs as a secondary container alongside the game server.
 
 ### Features
-- **Resource Utilization Graphs**: Real-time dual-line graphs tracking CPU (%) and RAM (% and GB) over time, with reference lines for memory reservation (4 GB) and memory limit (8 GB).
+- **Resource Utilization Graphs (up to 30 Days)**: Interactive dual-line graphs tracking CPU (%) and RAM (% and GB) over time with selectable timescales (`1h`, `24h`, `7d`, `30d`), reference lines for 4 GB reservation / 8 GB limit, and hover crosshair tooltips.
 - **Player Activity Graph**: Pioneer count and online activity over time.
+- **Persistent Metrics**: Automatically flushes rolling history to disk so data is preserved across container restarts.
 - **Log Parsing & Event Stream**: Live-tails the server log to extract and categorize key events:
   - Pioneer join and leave events (with active player list)
   - World saves and autosaves (with save completion time in seconds)

@@ -6,7 +6,9 @@ A lightweight, read-only web dashboard written in Go that runs alongside the Sat
 
 ## Features
 
-- **Resource Utilization Graphs**: Real-time dual-line graphs tracking CPU (%) and Memory (GB / % of limit) over time, with reference lines for memory reservation (4GB) and memory limit (8GB).
+- **Long-term Resource Utilization Graphs (up to 30 Days)**: Interactive dual-line graphs tracking CPU (%) and Memory (GB / % of limit) over customizable timescales (`1h`, `24h`, `7d`, `30d`). Automatically downsamples data into smooth buckets and renders X-axis date/time markers with interactive hover tooltips.
+- **Pioneer Activity Tracking**: Tracks player counts and active Pioneers over time across all timescale ranges.
+- **Automatic Persistence**: Historical metrics are stored in `/data/metrics_history.json` and automatically flushed to a persistent volume every few minutes so data survives container restarts.
 - **Log Parsing & Event Stream**: Continuously tails `/config/gamefiles/FactoryGame/Saved/Logs/FactoryGame.log` to detect:
   - Pioneer join & disconnect events
   - World saves and autosaves (with save duration)

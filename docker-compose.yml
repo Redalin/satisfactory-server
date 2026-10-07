@@ -31,6 +31,8 @@ services:
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
       - satisfactory-data:/config:ro
+      # Persistent volume for 30-day metrics history
+      - dashboard-data:/data
       # Optional: Mount Docker/Podman socket if you have it enabled for container-level stats
       # - '/var/run/docker.sock:/var/run/docker.sock:ro'
     environment:
@@ -52,4 +54,6 @@ services:
 
 volumes:
   satisfactory-data:
-    name: satisfactory-data          
+    name: satisfactory-data
+  dashboard-data:
+    name: satisfactory-dashboard-data

@@ -21,6 +21,7 @@ type AppConfig struct {
 	APIToken        string
 	TargetContainer string
 	CustomLogPath   string
+	DataDir         string
 	PollInterval    time.Duration
 }
 
@@ -41,6 +42,11 @@ func loadConfig() AppConfig {
 		containerName = "satisfactory-server"
 	}
 
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+
 	pollSec := 5
 	if s := os.Getenv("POLL_INTERVAL"); s != "" {
 		if val, err := strconv.Atoi(s); err == nil && val > 0 {
@@ -54,6 +60,7 @@ func loadConfig() AppConfig {
 		APIToken:        os.Getenv("API_TOKEN"),
 		TargetContainer: containerName,
 		CustomLogPath:   os.Getenv("LOG_FILE_PATH"),
+		DataDir:         dataDir,
 		PollInterval:    time.Duration(pollSec) * time.Second,
 	}
 }
@@ -80,7 +87,7 @@ type ServerApp struct {
 func main() {
 	cfg := loadConfig()
 	log.Printf("[Dashboard] Starting Satisfactory Web Dashboard on port :%s", cfg.Port)
-	log.Printf("[Dashboard] Monitoring container: %s | Server API: %s", cfg.TargetContainer, cfg.ServerAPIURL)
+	log.Printf("[Dashboard] Monitoring container: %s | Server API: %s | Data Dir: %s", cfg.TargetContainer, cfg.ServerAPIURL, cfg.DataDir)
 
 	customPaths := []string{}
 	if cfg.CustomLogPath != "" {
@@ -90,7 +97,7 @@ func main() {
 	app := &ServerApp{
 		config:       cfg,
 		apiClient:    NewAPIClient(cfg.ServerAPIURL, cfg.APIToken),
-		collector:    NewCollector(cfg.TargetContainer, 180),
+		collector:    NewCollector(cfg.TargetContainer, cfg.DataDir),
 		logParser:    NewLogParser(customPaths, 250),
 		savesScanner: NewSavesScanner(),
 	}
@@ -101,6 +108,7 @@ func main() {
 	// Start background workers
 	go app.startLogTailer()
 	go app.startMetricsCollector()
+	go app.startPersistenceWorker()
 
 	// HTTP Routes
 	mux := http.NewServeMux()
@@ -146,6 +154,15 @@ func (app *ServerApp) startMetricsCollector() {
 	}
 }
 
+func (app *ServerApp) startPersistenceWorker() {
+	ticker := time.NewTicker(3 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		app.collector.SaveHistoryToDisk()
+	}
+}
+
 func (app *ServerApp) sampleMetrics() {
 	// 1. Health check Satisfactory HTTPS API
 	isHealthy, _, _ := app.apiClient.CheckHealth()
@@ -180,7 +197,7 @@ func (app *ServerApp) sampleMetrics() {
 		ServerHealthy:     isHealthy,
 		SessionName:       sessionName,
 		Latest:            pt,
-		History:           app.collector.GetHistory(),
+		History:           app.collector.GetHistory("1h"),
 		OnlinePlayerNames: onlinePlayers,
 		LastSave:          lastSave,
 	}
@@ -198,9 +215,17 @@ func (app *ServerApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *ServerApp) handleStats(w http.ResponseWriter, r *http.Request) {
+	timeRange := r.URL.Query().Get("range")
+	if timeRange == "" {
+		timeRange = "1h"
+	}
+
 	app.mu.RLock()
 	state := app.lastState
 	app.mu.RUnlock()
+
+	// Supply history for the requested time range (1h, 24h, 7d, 30d)
+	state.History = app.collector.GetHistory(timeRange)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)
@@ -229,4 +254,3 @@ func (app *ServerApp) handleSaves(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(saves)
 }
-
