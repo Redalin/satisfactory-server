@@ -27,7 +27,7 @@ services:
     build:
       context: ./dashboard
     ports:
-      - '8080:8080'
+      - '3045:3045'
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
       - satisfactory-data:/config:ro
