@@ -8,7 +8,7 @@ services:
       - '7777:7777/udp'
       - '8888:8888/tcp'
     volumes:
-      - satisfactory-data:/config:z
+      - satisfactory-data:/config
     environment:
       - MAXPLAYERS=4
       - PGID=1000
@@ -30,11 +30,11 @@ services:
       - '8080:8080'
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
-      - satisfactory-data:/config:ro,z
+      - satisfactory-data:/config:ro
       # Optional: Mount Docker/Podman socket if you have it enabled for container-level stats
       # - '/var/run/docker.sock:/var/run/docker.sock:ro'
     environment:
-      - PORT=8080
+      - PORT=3045
       - SERVER_API_URL=https://satisfactory-server:7777
       - TARGET_CONTAINER=satisfactory-server
       - POLL_INTERVAL=5
