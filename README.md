@@ -78,7 +78,7 @@ robtme/satisfactory-server:latest
 
 ### Docker Compose
 
-If you're using [Docker Compose](https://docs.docker.com/compose/):
+If you're using [Docker Compose](https://docs.docker.com/compose/) or Podman Compose:
 
 ```yaml
 services:
@@ -91,7 +91,7 @@ services:
       - '7777:7777/udp'
       - '8888:8888/tcp'
     volumes:
-      - './satisfactory-server:/config'
+      - './satisfactory-server:/config:z'
     environment:
       - MAXPLAYERS=4
       - PGID=1000
@@ -104,7 +104,51 @@ services:
           memory: 8G
         reservations:
           memory: 4G
+
+  satisfactory-dashboard:
+    container_name: 'satisfactory-dashboard'
+    build:
+      context: ./dashboard
+    ports:
+      - '8080:8080'
+    volumes:
+      - './satisfactory-server:/config:ro,z'
+    environment:
+      - PORT=8080
+      - SERVER_API_URL=https://satisfactory-server:7777
+      - TARGET_CONTAINER=satisfactory-server
+      - POLL_INTERVAL=5
+    depends_on:
+      - satisfactory-server
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 16M
 ```
+
+## Web Stats Dashboard
+
+This repository includes a lightweight, read-only web dashboard written in Go (`./dashboard`) that runs as a secondary container alongside the game server.
+
+### Features
+- **Resource Utilization Graphs**: Real-time dual-line graphs tracking CPU (%) and RAM (% and GB) over time, with reference lines for memory reservation (4 GB) and memory limit (8 GB).
+- **Player Activity Graph**: Pioneer count and online activity over time.
+- **Log Parsing & Event Stream**: Live-tails the server log to extract and categorize key events:
+  - Pioneer join and leave events (with active player list)
+  - World saves and autosaves (with save completion time in seconds)
+  - Unreal Engine boot, SteamCMD updates, and Server API listening status
+  - Crash/warning diagnostics
+- **Save File & Backup Browser**: Scans `/config/saved/server` and `/config/backups` to show save filenames, sizes, and relative modification timestamps.
+- **Satisfactory 1.0 Dedicated Server API**: Connects to the local HTTPS API (`/api/v1`) with self-signed TLS handling for automated health checks and session details.
+- **Ultra Lightweight**: Single static Go binary (~15 MB Alpine image, ~10 MB RAM footprint) with an embedded, dependency-free FICSIT-themed UI.
+
+Open **`http://localhost:8080`** in your browser after starting the stack.
+
+For detailed configuration options, see the [Dashboard Documentation](dashboard/README.md).
+
 
 ### Updating
 
