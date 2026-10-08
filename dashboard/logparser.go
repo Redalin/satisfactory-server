@@ -39,8 +39,9 @@ type LogParser struct {
 	events        []LogEvent
 	maxEvents     int
 	nextID        int
-	onlinePlayers map[string]time.Time
-	lastSave      SaveInfo
+	onlinePlayers     map[string]time.Time
+	lastSave          SaveInfo
+	activeSessionName string
 }
 
 var (
@@ -391,6 +392,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 		sessionName := ""
 		if sm := reSessionParam.FindStringSubmatch(msg); len(sm) > 1 {
 			sessionName = sm[1]
+			p.activeSessionName = sessionName
 		}
 		msgText := "Server travel initiated"
 		if sessionName != "" && loadGame != "" {
@@ -741,6 +743,13 @@ func (p *LogParser) GetLastSave() SaveInfo {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.lastSave
+}
+
+// GetSessionName returns the active session name parsed from logs
+func (p *LogParser) GetSessionName() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.activeSessionName
 }
 
 func cleanName(raw string) string {

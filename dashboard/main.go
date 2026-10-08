@@ -67,7 +67,9 @@ func loadConfig() AppConfig {
 
 type ServerStateSummary struct {
 	ServerHealthy     bool          `json:"serverHealthy"`
+	IsGameRunning     bool          `json:"isGameRunning"`
 	SessionName       string        `json:"sessionName"`
+	TotalGameDuration float64       `json:"totalGameDuration"`
 	Latest            MetricPoint   `json:"latest"`
 	History           []MetricPoint `json:"history"`
 	OnlinePlayerNames []string      `json:"onlinePlayerNames"`
@@ -170,13 +172,25 @@ func (app *ServerApp) sampleMetrics() {
 	// 2. Query server state if token configured
 	var sessionName string
 	var apiPlayerCount = -1
+	var isGameRunning bool
+	var totalGameDuration float64
 
 	if app.config.APIToken != "" {
 		if stateResp, err := app.apiClient.QueryState(); err == nil && stateResp != nil {
 			isHealthy = true
 			sessionName = stateResp.Data.ServerGameState.ActiveSessionName
 			apiPlayerCount = stateResp.Data.ServerGameState.NumConnectedPlayers
+			isGameRunning = stateResp.Data.ServerGameState.IsGameRunning
+			totalGameDuration = stateResp.Data.ServerGameState.TotalGameDuration
 		}
+	}
+
+	// Supplementary session name from logs if empty
+	if sessionName == "" {
+		sessionName = app.logParser.GetSessionName()
+	}
+	if !isGameRunning && sessionName != "" {
+		isGameRunning = isHealthy
 	}
 
 	// 3. Fallback / supplementary player info from logs
@@ -201,7 +215,9 @@ func (app *ServerApp) sampleMetrics() {
 	app.mu.Lock()
 	app.lastState = ServerStateSummary{
 		ServerHealthy:     isHealthy,
+		IsGameRunning:     isGameRunning,
 		SessionName:       sessionName,
+		TotalGameDuration: totalGameDuration,
 		Latest:            pt,
 		History:           app.collector.GetHistory("1h"),
 		OnlinePlayerNames: onlinePlayers,

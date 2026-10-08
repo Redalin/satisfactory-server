@@ -33,8 +33,8 @@ services:
       - satisfactory-data:/config:ro
       # Persistent volume for 30-day metrics history
       - dashboard-data:/data
-      # Optional: Mount Docker/Podman socket if you have it enabled for container-level stats
-      # - '/var/run/docker.sock:/var/run/docker.sock:ro'
+      # Mount Docker/Podman socket for container-level stats
+      - '/var/run/docker.sock:/var/run/docker.sock:ro'
     environment:
       - PORT=3045
       - SERVER_API_URL=https://satisfactory-server:7777

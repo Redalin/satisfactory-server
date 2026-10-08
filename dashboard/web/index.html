@@ -138,6 +138,34 @@
       font-family: var(--font-mono);
     }
 
+    .tz-toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+      background: rgba(255, 255, 255, 0.04);
+      padding: 0.3rem 0.65rem;
+      border-radius: 9999px;
+      border: 1px solid var(--border);
+      transition: color 0.2s, border-color 0.2s, background-color 0.2s;
+    }
+
+    .tz-toggle-label:hover {
+      color: var(--text-main);
+      border-color: var(--border-accent);
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .tz-toggle-label input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: var(--ficsit-orange);
+      width: 13px;
+      height: 13px;
+    }
+
     /* Main Container */
     main {
       flex: 1;
@@ -189,6 +217,7 @@
     .stat-card.mem::after { background: var(--accent-cyan); }
     .stat-card.players::after { background: var(--accent-green); }
     .stat-card.save::after { background: var(--accent-purple); }
+    .stat-card.game::after { background: var(--accent-yellow); }
 
     .stat-header {
       display: flex;
@@ -612,6 +641,10 @@
       </div>
     </div>
     <div class="header-actions">
+      <label class="tz-toggle-label" title="Toggle between Local browser time and UTC">
+        <input type="checkbox" id="utcToggle" onchange="toggleUTC(this.checked)">
+        <span>Show UTC</span>
+      </label>
       <div class="status-badge" id="serverStatusBadge">
         <span class="status-dot"></span>
         <span id="serverStatusText">CHECKING...</span>
@@ -622,8 +655,23 @@
 
   <!-- Main Content -->
   <main>
-    <!-- Top 4 KPI Cards -->
+    <!-- Top KPI Cards -->
     <section class="stats-grid">
+      <!-- Active Game Session -->
+      <div class="stat-card game">
+        <div class="stat-header">
+          <span class="stat-title">Active Game</span>
+          <span class="stat-unit" id="gameStatusBadge">Checking...</span>
+        </div>
+        <div class="stat-value" style="font-size: 1.45rem;">
+          <span id="valGameSession" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 220px;">--</span>
+        </div>
+        <div class="stat-footer" style="margin-top: auto;">
+          <span id="valGameDuration">Duration: --</span>
+          <span id="valGameDetails">FICSIT World</span>
+        </div>
+      </div>
+
       <!-- CPU -->
       <div class="stat-card cpu">
         <div class="stat-header">
@@ -833,6 +881,60 @@
     let allEvents = [];
     let peakCPU = 0;
     let metricHistory = [];
+    let latestStatsData = null;
+    let latestSavesData = null;
+
+    // Timezone preference: default to local time (showUTC = false)
+    let showUTC = localStorage.getItem('dashboard_show_utc') === 'true';
+
+    function initUTCToggle() {
+      const chk = document.getElementById('utcToggle');
+      if (chk) chk.checked = showUTC;
+    }
+
+    function toggleUTC(enabled) {
+      showUTC = enabled;
+      localStorage.setItem('dashboard_show_utc', enabled ? 'true' : 'false');
+      renderResourceChart();
+      renderPlayerChart();
+      renderEventsList();
+      if (latestSavesData) updateSavesUI(latestSavesData);
+    }
+
+    function formatDuration(totalSec) {
+      if (!totalSec || totalSec <= 0) return '0m';
+      const sec = Math.floor(totalSec);
+      const days = Math.floor(sec / 86400);
+      const hours = Math.floor((sec % 86400) / 3600);
+      const mins = Math.floor((sec % 3600) / 60);
+      if (days > 0) {
+        return `${days}d ${hours}h ${mins}m`;
+      }
+      if (hours > 0) {
+        return `${hours}h ${mins}m`;
+      }
+      return `${mins}m ${sec % 60}s`;
+    }
+
+    function formatEventTime(isoTime, fallbackStr) {
+      if (isoTime) {
+        const d = new Date(isoTime);
+        if (!isNaN(d.getTime())) {
+          if (showUTC) {
+            const hh = String(d.getUTCHours()).padStart(2, '0');
+            const mm = String(d.getUTCMinutes()).padStart(2, '0');
+            const ss = String(d.getUTCSeconds()).padStart(2, '0');
+            return `${hh}:${mm}:${ss} UTC`;
+          } else {
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const ss = String(d.getSeconds()).padStart(2, '0');
+            return `${hh}:${mm}:${ss}`;
+          }
+        }
+      }
+      return fallbackStr || '';
+    }
 
     // Hover state for charts
     let hoveredIndex = -1;
@@ -876,11 +978,19 @@
 
     function formatTimeLabel(dateStr, range) {
       const d = new Date(dateStr);
-      if (range === '30d' || range === '7d') {
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        return `${monthNames[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:00`;
+      if (isNaN(d.getTime())) return '';
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      if (showUTC) {
+        if (range === '30d' || range === '7d') {
+          return `${monthNames[d.getUTCMonth()]} ${d.getUTCDate()} ${String(d.getUTCHours()).padStart(2, '0')}:00`;
+        }
+        return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} Z`;
+      } else {
+        if (range === '30d' || range === '7d') {
+          return `${monthNames[d.getMonth()]} ${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:00`;
+        }
+        return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       }
-      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     }
 
     function renderResourceChart() {
@@ -1094,7 +1204,12 @@
         if (!pt) return;
 
         const dateObj = new Date(pt.timestamp);
-        const dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
+        let dateStr;
+        if (showUTC) {
+          dateStr = dateObj.toUTCString();
+        } else {
+          dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
+        }
 
         tooltip.innerHTML = `
           <div class="tooltip-date">${dateStr}</div>
@@ -1175,6 +1290,8 @@
           ? ` • repeated ${e.count}x`
           : '';
 
+        const eventTimeDisplay = formatEventTime(e.timestamp, e.timeString);
+
         return `
           <div class="event-row">
             <span class="event-badge ${badgeClass}">${badgeLabel}</span>
@@ -1183,7 +1300,7 @@
                 <span class="event-message">${escapeHtml(e.message)}</span>
                 ${countBadge}
               </div>
-              <span class="event-time">${e.timeString || ''}${repeatSub}</span>
+              <span class="event-time">${eventTimeDisplay}${repeatSub}</span>
             </div>
           </div>
         `;
@@ -1226,6 +1343,46 @@
     }
 
     function updateStatsUI(data) {
+      latestStatsData = data;
+
+      // Active Game Session & Time Running
+      const sessionEl = document.getElementById('valGameSession');
+      const durationEl = document.getElementById('valGameDuration');
+      const statusBadge = document.getElementById('gameStatusBadge');
+      const detailsEl = document.getElementById('valGameDetails');
+
+      const rawSession = data.sessionName || (data.lastSave && data.lastSave.saveName ? data.lastSave.saveName.replace(/\.sav$/i, '') : '');
+      const sessionName = rawSession || 'No active session';
+      if (sessionEl) {
+        sessionEl.textContent = sessionName;
+        sessionEl.title = sessionName;
+      }
+
+      if (statusBadge) {
+        if (data.isGameRunning) {
+          statusBadge.textContent = 'RUNNING';
+          statusBadge.style.color = 'var(--accent-green)';
+        } else if (data.serverHealthy) {
+          statusBadge.textContent = rawSession ? 'ACTIVE' : 'IDLE';
+          statusBadge.style.color = 'var(--accent-cyan)';
+        } else {
+          statusBadge.textContent = 'OFFLINE';
+          statusBadge.style.color = 'var(--accent-red)';
+        }
+      }
+
+      if (durationEl) {
+        if (data.totalGameDuration && data.totalGameDuration > 0) {
+          durationEl.textContent = 'Running: ' + formatDuration(data.totalGameDuration);
+        } else {
+          durationEl.textContent = data.isGameRunning ? 'Running' : 'Ready';
+        }
+      }
+
+      if (detailsEl) {
+        detailsEl.textContent = data.isGameRunning ? 'Active Game' : 'Server Lobby';
+      }
+
       // Server Status
       const badge = document.getElementById('serverStatusBadge');
       const text = document.getElementById('serverStatusText');
@@ -1237,8 +1394,12 @@
         text.textContent = 'STARTING';
       }
 
-      if (data.sessionName) {
-        document.getElementById('serverSessionName').textContent = 'Session: ' + data.sessionName;
+      if (rawSession) {
+        let subText = 'Session: ' + rawSession;
+        if (data.totalGameDuration && data.totalGameDuration > 0) {
+          subText += ' • Running: ' + formatDuration(data.totalGameDuration);
+        }
+        document.getElementById('serverSessionName').textContent = subText;
       }
 
       // Latest metric point
@@ -1273,7 +1434,6 @@
         }
       }
 
-      // Last Save Info
       // Last Save Info
       if (data.lastSave && data.lastSave.lastSaveTime && data.lastSave.lastSaveTime !== "0001-01-01T00:00:00Z") {
         const saveDate = new Date(data.lastSave.lastSaveTime);
@@ -1311,6 +1471,7 @@
     }
 
     function updateSavesUI(saves) {
+      latestSavesData = saves;
       const tbody = document.getElementById('savesTableBody');
       if (!saves || saves.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-dim);">No saves found yet.</td></tr>';
@@ -1328,14 +1489,28 @@
         }
       }
 
-      tbody.innerHTML = saves.map(s => `
-        <tr>
-          <td><strong>${escapeHtml(s.name)}</strong></td>
-          <td><span class="save-badge ${s.isBackup ? 'backup' : ''}">${s.isBackup ? 'BACKUP' : 'SAVE'}</span></td>
-          <td style="font-family: var(--font-mono);">${s.sizeHuman}</td>
-          <td style="color: var(--text-muted);">${s.timeAgo || s.modTimeString}</td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = saves.map(s => {
+        let modTimeDisplay = s.timeAgo || s.modTimeString;
+        if (s.modTime) {
+          const md = new Date(s.modTime);
+          if (!isNaN(md.getTime())) {
+            if (showUTC) {
+              const utcStr = md.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+              modTimeDisplay = (s.timeAgo ? s.timeAgo + ' • ' : '') + utcStr;
+            } else {
+              modTimeDisplay = (s.timeAgo ? s.timeAgo + ' • ' : '') + md.toLocaleString();
+            }
+          }
+        }
+        return `
+          <tr>
+            <td><strong>${escapeHtml(s.name)}</strong></td>
+            <td><span class="save-badge ${s.isBackup ? 'backup' : ''}">${s.isBackup ? 'BACKUP' : 'SAVE'}</span></td>
+            <td style="font-family: var(--font-mono);">${s.sizeHuman}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${modTimeDisplay}</td>
+          </tr>
+        `;
+      }).join('');
     }
 
     window.addEventListener('resize', () => {
@@ -1345,6 +1520,9 @@
 
     // Initialize Hover Listeners
     attachChartHover('resourceChart', 'resourceTooltip');
+
+    // Initialize UTC Toggle from stored preference
+    initUTCToggle();
 
     // Start Polling Loop
     fetchData();
