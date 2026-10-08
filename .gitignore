@@ -12,7 +12,7 @@ gamefiles/
 *.log
 logs/
 # Preserve committed example log if needed
-!server.log
+#server.log
 
 # Go build artifacts (if compiled locally)
 satisfactory-dashboard

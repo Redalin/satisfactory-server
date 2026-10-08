@@ -492,11 +492,38 @@
       border: 1px solid rgba(245, 158, 11, 0.3);
     }
 
+    .badge-error {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
     .event-content {
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 0.15rem;
+      gap: 0.2rem;
+    }
+
+    .event-message-line {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+    }
+
+    .event-count-badge {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(250, 149, 73, 0.22);
+      color: var(--ficsit-orange);
+      border: 1px solid rgba(250, 149, 73, 0.45);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      padding: 0.05rem 0.4rem;
+      border-radius: 9999px;
+      letter-spacing: 0.02em;
     }
 
     .event-message {
@@ -778,10 +805,11 @@
 
         <!-- Filter Bar -->
         <div class="events-filter-bar">
-          <button class="filter-tab active" onclick="setEventFilter('all')">All</button>
-          <button class="filter-tab" onclick="setEventFilter('players')">Players</button>
-          <button class="filter-tab" onclick="setEventFilter('save')">Saves</button>
-          <button class="filter-tab" onclick="setEventFilter('server')">Server</button>
+          <button class="filter-tab active" onclick="setEventFilter('all', event)">All</button>
+          <button class="filter-tab" onclick="setEventFilter('players', event)">Players</button>
+          <button class="filter-tab" onclick="setEventFilter('save', event)">Saves</button>
+          <button class="filter-tab" onclick="setEventFilter('server', event)">Server</button>
+          <button class="filter-tab" onclick="setEventFilter('warn', event)">Warnings & Errors</button>
         </div>
 
         <div class="events-list" id="eventsContainer">
@@ -826,10 +854,13 @@
       fetchData();
     }
 
-    function setEventFilter(f) {
+    function setEventFilter(f, ev) {
       eventFilter = f;
       document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.remove('active'));
-      event.target.classList.add('active');
+      const target = (ev && ev.target) || (window.event && window.event.target);
+      if (target) {
+        target.classList.add('active');
+      }
       renderEventsList();
     }
 
@@ -1104,7 +1135,9 @@
       } else if (eventFilter === 'save') {
         filtered = allEvents.filter(e => e.category === 'save');
       } else if (eventFilter === 'server') {
-        filtered = allEvents.filter(e => e.category === 'server' || e.category === 'warning');
+        filtered = allEvents.filter(e => e.category === 'server');
+      } else if (eventFilter === 'warn') {
+        filtered = allEvents.filter(e => e.category === 'warning' || e.category === 'error');
       }
 
       if (filtered.length === 0) {
@@ -1129,14 +1162,28 @@
         } else if (e.category === 'warning') {
           badgeClass = 'badge-warning';
           badgeLabel = 'WARN';
+        } else if (e.category === 'error') {
+          badgeClass = 'badge-error';
+          badgeLabel = 'ERROR';
         }
+
+        const countBadge = (e.count && e.count > 1)
+          ? `<span class="event-count-badge" title="Event repeated ${e.count} times">×${e.count}</span>`
+          : '';
+
+        const repeatSub = (e.count && e.count > 1)
+          ? ` • repeated ${e.count}x`
+          : '';
 
         return `
           <div class="event-row">
             <span class="event-badge ${badgeClass}">${badgeLabel}</span>
             <div class="event-content">
-              <span class="event-message">${escapeHtml(e.message)}</span>
-              <span class="event-time">${e.timeString || ''}</span>
+              <div class="event-message-line">
+                <span class="event-message">${escapeHtml(e.message)}</span>
+                ${countBadge}
+              </div>
+              <span class="event-time">${e.timeString || ''}${repeatSub}</span>
             </div>
           </div>
         `;
