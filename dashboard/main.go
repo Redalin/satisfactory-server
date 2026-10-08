@@ -72,8 +72,6 @@ type ServerStateSummary struct {
 	History           []MetricPoint `json:"history"`
 	OnlinePlayerNames []string      `json:"onlinePlayerNames"`
 	LastSave          SaveInfo      `json:"lastSave"`
-	ActiveLogFile     string        `json:"activeLogFile"`
-	LogLastModified   time.Time     `json:"logLastModified"`
 }
 
 type ServerApp struct {
@@ -200,8 +198,6 @@ func (app *ServerApp) sampleMetrics() {
 		}
 	}
 
-	activeLog, logModTime := app.logParser.GetActiveLogSource()
-
 	app.mu.Lock()
 	app.lastState = ServerStateSummary{
 		ServerHealthy:     isHealthy,
@@ -210,8 +206,6 @@ func (app *ServerApp) sampleMetrics() {
 		History:           app.collector.GetHistory("1h"),
 		OnlinePlayerNames: onlinePlayers,
 		LastSave:          lastSave,
-		ActiveLogFile:     activeLog,
-		LogLastModified:   logModTime,
 	}
 	app.mu.Unlock()
 }
