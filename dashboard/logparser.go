@@ -42,6 +42,10 @@ type LogParser struct {
 	onlinePlayers     map[string]time.Time
 	lastSave          SaveInfo
 	activeSessionName string
+	isGameRunning     bool
+	sessionStartTime  time.Time
+	worldTimeSeconds  float64
+	worldTimeUpdated  time.Time
 }
 
 var (
@@ -80,9 +84,10 @@ var (
 	reReliableMessaging   = regexp.MustCompile(`(?:Server streaming socket bound to port|Reliable socket listen port has been explicitly remapped to)\s*(\d+)`)
 	reAutoPause           = regexp.MustCompile(`auto-pause is allowed to proceed from now on`)
 	reAcceptConnection    = regexp.MustCompile(`NotifyAcceptingConnection accepted (?:from|aggregation):\s*([^\s\r\n]+)`)
-	reProcessServerTravel = regexp.MustCompile(`ProcessServerTravel:`)
+	reProcessServerTravel = regexp.MustCompile(`(?i)(?:ProcessServerTravel:|LogNet:\s*Browse:|LogLoad:\s*LoadMap:|Browse Started Browse:)(.*)`)
 	reLoadGameParam       = regexp.MustCompile(`[?&]loadgame=([^?&\s]+)`)
 	reSessionParam        = regexp.MustCompile(`[?&]sessionName=([^?&\s]+)`)
+	reWorldTimeSeconds    = regexp.MustCompile(`(?i)WorldTimeSeconds\s*=\s*([0-9.]+)`)
 
 	// Warnings & errors
 	reRootMismatch       = regexp.MustCompile(`New/Old Root size mismatch!`)
@@ -383,16 +388,37 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	}
 
 	// 4. Server Lifecycle & Match State
+	if wm := reWorldTimeSeconds.FindStringSubmatch(msg); len(wm) > 1 {
+		if sec, err := strconv.ParseFloat(wm[1], 64); err == nil && sec > 0 {
+			p.worldTimeSeconds = sec
+			p.worldTimeUpdated = eventTime
+			p.isGameRunning = true
+		}
+	}
+	if strings.Contains(msg, "Persistent_Level") && strings.Contains(msg, "up for play") {
+		p.isGameRunning = true
+		if p.sessionStartTime.IsZero() {
+			p.sessionStartTime = eventTime
+		}
+	}
 	if reProcessServerTravel.MatchString(msg) {
 		loadGame := ""
 		if lm := reLoadGameParam.FindStringSubmatch(msg); len(lm) > 1 {
 			loadGame = lm[1]
 			p.lastSave.SaveName = loadGame
+			p.isGameRunning = true
+			if p.sessionStartTime.IsZero() {
+				p.sessionStartTime = eventTime
+			}
 		}
 		sessionName := ""
 		if sm := reSessionParam.FindStringSubmatch(msg); len(sm) > 1 {
 			sessionName = sm[1]
 			p.activeSessionName = sessionName
+			p.isGameRunning = true
+			if p.sessionStartTime.IsZero() {
+				p.sessionStartTime = eventTime
+			}
 		}
 		msgText := "Server travel initiated"
 		if sessionName != "" && loadGame != "" {
@@ -750,6 +776,33 @@ func (p *LogParser) GetSessionName() string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.activeSessionName
+}
+
+// IsGameRunning returns true if an active game session is loaded and running
+func (p *LogParser) IsGameRunning() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.isGameRunning
+}
+
+// GetTotalGameDuration returns elapsed in-game playtime or session uptime in seconds
+func (p *LogParser) GetTotalGameDuration() float64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	if p.worldTimeSeconds > 0 {
+		if !p.worldTimeUpdated.IsZero() {
+			elapsed := time.Since(p.worldTimeUpdated).Seconds()
+			if elapsed > 0 {
+				return p.worldTimeSeconds + elapsed
+			}
+		}
+		return p.worldTimeSeconds
+	}
+	if !p.sessionStartTime.IsZero() {
+		return time.Since(p.sessionStartTime).Seconds()
+	}
+	return 0
 }
 
 func cleanName(raw string) string {

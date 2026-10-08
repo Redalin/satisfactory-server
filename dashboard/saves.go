@@ -1,25 +1,30 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf16"
 )
 
 // SaveFileInfo represents metadata about a saved game file
 type SaveFileInfo struct {
-	Name          string    `json:"name"`
-	SizeMB        float64   `json:"sizeMB"`
-	SizeHuman     string    `json:"sizeHuman"`
-	ModTime       time.Time `json:"modTime"`
-	ModTimeString string    `json:"modTimeString"`
-	TimeAgo       string    `json:"timeAgo"`
-	IsBackup      bool      `json:"isBackup"`
-	Path          string    `json:"path"`
+	Name            string    `json:"name"`
+	SessionName     string    `json:"sessionName,omitempty"`
+	PlayDurationSec int       `json:"playDurationSec,omitempty"`
+	SizeMB          float64   `json:"sizeMB"`
+	SizeHuman       string    `json:"sizeHuman"`
+	ModTime         time.Time `json:"modTime"`
+	ModTimeString   string    `json:"modTimeString"`
+	TimeAgo         string    `json:"timeAgo"`
+	IsBackup        bool      `json:"isBackup"`
+	Path            string    `json:"path"`
 }
 
 // SavesScanner inspects disk saves and backups
@@ -72,15 +77,23 @@ func (s *SavesScanner) ListSaves(limit int) []SaveFileInfo {
 			isBackup := strings.Contains(strings.ToLower(path), "backup")
 			sizeMB := round2(float64(info.Size()) / (1024 * 1024))
 
+			var sessionName string
+			var playDurSec int
+			if strings.HasSuffix(nameLower, ".sav") && !isBackup {
+				sessionName, playDurSec, _ = readSaveHeader(path)
+			}
+
 			resultsMap[path] = SaveFileInfo{
-				Name:          d.Name(),
-				SizeMB:        sizeMB,
-				SizeHuman:     formatBytes(info.Size()),
-				ModTime:       info.ModTime(),
-				ModTimeString: info.ModTime().Format("2006-01-02 15:04:05"),
-				TimeAgo:       timeAgo(info.ModTime()),
-				IsBackup:      isBackup,
-				Path:          path,
+				Name:            d.Name(),
+				SessionName:     sessionName,
+				PlayDurationSec: playDurSec,
+				SizeMB:          sizeMB,
+				SizeHuman:       formatBytes(info.Size()),
+				ModTime:         info.ModTime(),
+				ModTimeString:   info.ModTime().Format("2006-01-02 15:04:05"),
+				TimeAgo:         timeAgo(info.ModTime()),
+				IsBackup:        isBackup,
+				Path:            path,
 			}
 			return nil
 		})
@@ -150,4 +163,90 @@ func timeAgo(t time.Time) string {
 	}
 	d := int(diff.Hours() / 24)
 	return fmt.Sprintf("%dd ago", d)
+}
+
+// readSaveHeader attempts to extract sessionName and playDurationSec from a Satisfactory save file
+func readSaveHeader(path string) (string, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer f.Close()
+
+	var headerVersion, saveVersion, buildVersion int32
+	if err := binary.Read(f, binary.LittleEndian, &headerVersion); err != nil {
+		return "", 0, err
+	}
+	if headerVersion < 5 || headerVersion > 25 {
+		return "", 0, fmt.Errorf("unsupported header version: %d", headerVersion)
+	}
+
+	if err := binary.Read(f, binary.LittleEndian, &saveVersion); err != nil {
+		return "", 0, err
+	}
+	if err := binary.Read(f, binary.LittleEndian, &buildVersion); err != nil {
+		return "", 0, err
+	}
+
+	// MapName
+	if _, err := readFString(f); err != nil {
+		return "", 0, err
+	}
+	// MapOptions
+	if _, err := readFString(f); err != nil {
+		return "", 0, err
+	}
+	// SessionName
+	sessionName, err := readFString(f)
+	if err != nil {
+		return "", 0, err
+	}
+
+	// PlayDurationSeconds
+	var playDurationSec int32
+	if err := binary.Read(f, binary.LittleEndian, &playDurationSec); err != nil {
+		return sessionName, 0, err
+	}
+
+	return sessionName, int(playDurationSec), nil
+}
+
+func readFString(r io.Reader) (string, error) {
+	var length int32
+	if err := binary.Read(r, binary.LittleEndian, &length); err != nil {
+		return "", err
+	}
+	if length == 0 {
+		return "", nil
+	}
+	if length > 0 {
+		if length > 1024 {
+			return "", fmt.Errorf("string length exceeds sanity limit")
+		}
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(r, buf); err != nil {
+			return "", err
+		}
+		if len(buf) > 0 && buf[len(buf)-1] == 0 {
+			buf = buf[:len(buf)-1]
+		}
+		return string(buf), nil
+	}
+	// UTF-16
+	utf16Len := -length
+	if utf16Len > 1024 {
+		return "", fmt.Errorf("utf16 string length exceeds sanity limit")
+	}
+	buf := make([]byte, utf16Len*2)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return "", err
+	}
+	u16s := make([]uint16, utf16Len)
+	for i := 0; i < int(utf16Len); i++ {
+		u16s[i] = binary.LittleEndian.Uint16(buf[i*2:])
+	}
+	if len(u16s) > 0 && u16s[len(u16s)-1] == 0 {
+		u16s = u16s[:len(u16s)-1]
+	}
+	return string(utf16.Decode(u16s)), nil
 }

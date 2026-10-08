@@ -1358,12 +1358,14 @@
         sessionEl.title = sessionName;
       }
 
+      const isRunning = Boolean(data.isGameRunning || (data.serverHealthy && rawSession));
+
       if (statusBadge) {
-        if (data.isGameRunning) {
+        if (isRunning) {
           statusBadge.textContent = 'RUNNING';
           statusBadge.style.color = 'var(--accent-green)';
         } else if (data.serverHealthy) {
-          statusBadge.textContent = rawSession ? 'ACTIVE' : 'IDLE';
+          statusBadge.textContent = 'LOBBY';
           statusBadge.style.color = 'var(--accent-cyan)';
         } else {
           statusBadge.textContent = 'OFFLINE';
@@ -1374,13 +1376,15 @@
       if (durationEl) {
         if (data.totalGameDuration && data.totalGameDuration > 0) {
           durationEl.textContent = 'Running: ' + formatDuration(data.totalGameDuration);
+        } else if (isRunning) {
+          durationEl.textContent = 'Running: Active';
         } else {
-          durationEl.textContent = data.isGameRunning ? 'Running' : 'Ready';
+          durationEl.textContent = 'Ready';
         }
       }
 
       if (detailsEl) {
-        detailsEl.textContent = data.isGameRunning ? 'Active Game' : 'Server Lobby';
+        detailsEl.textContent = isRunning ? 'Active Game' : 'Server Lobby';
       }
 
       // Server Status

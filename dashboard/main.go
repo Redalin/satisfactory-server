@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -185,31 +186,50 @@ func (app *ServerApp) sampleMetrics() {
 		}
 	}
 
-	// Supplementary session name from logs if empty
+	// 3. Fallback / supplementary session info from logs
 	if sessionName == "" {
 		sessionName = app.logParser.GetSessionName()
 	}
-	if !isGameRunning && sessionName != "" {
-		isGameRunning = isHealthy
+	if !isGameRunning {
+		isGameRunning = app.logParser.IsGameRunning()
+	}
+	if totalGameDuration == 0 {
+		totalGameDuration = app.logParser.GetTotalGameDuration()
 	}
 
-	// 3. Fallback / supplementary player info from logs
+	// 4. Fallback / supplementary player info from logs
 	onlinePlayers := app.logParser.GetOnlinePlayers()
 	playerCount := len(onlinePlayers)
 	if apiPlayerCount >= 0 {
 		playerCount = apiPlayerCount
 	}
 
-	// 4. Sample CPU and RAM
+	// 5. Sample CPU and RAM
 	pt := app.collector.CollectStats(playerCount, isHealthy)
 
-	// 5. Update cached state
+	// 6. Update cached state and fallback from save files
 	lastSave := app.logParser.GetLastSave()
-	if diskSave := app.savesScanner.GetLatestSave(); diskSave != nil {
+	diskSave := app.savesScanner.GetLatestSave()
+	if diskSave != nil {
 		if lastSave.LastSaveTime.IsZero() || diskSave.ModTime.After(lastSave.LastSaveTime) {
 			lastSave.LastSaveTime = diskSave.ModTime
 			lastSave.SaveName = diskSave.Name
 		}
+		if sessionName == "" {
+			if diskSave.SessionName != "" {
+				sessionName = diskSave.SessionName
+			} else {
+				sessionName = strings.TrimSuffix(diskSave.Name, filepath.Ext(diskSave.Name))
+			}
+		}
+		if totalGameDuration == 0 && diskSave.PlayDurationSec > 0 {
+			totalGameDuration = float64(diskSave.PlayDurationSec)
+		}
+	}
+
+	// If session is known or players are connected, and server is healthy, mark game as running
+	if !isGameRunning && isHealthy && (sessionName != "" || playerCount > 0) {
+		isGameRunning = true
 	}
 
 	app.mu.Lock()
