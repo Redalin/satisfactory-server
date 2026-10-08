@@ -792,14 +792,19 @@
       <!-- Right Column: Key Event Stream -->
       <div class="panel" style="height: 100%;">
         <div class="panel-header">
-          <div class="panel-title">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-            </svg>
-            Server & Player Events
+          <div>
+            <div class="panel-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+                <line x1="16" y1="13" x2="8" y2="13"></line>
+                <line x1="16" y1="17" x2="8" y2="17"></line>
+              </svg>
+              Server & Player Events
+            </div>
+            <div id="logSourceText" style="font-size: 0.72rem; color: var(--text-dim); margin-top: 3px; font-family: var(--font-mono);">
+              Source: Scanning logs...
+            </div>
           </div>
         </div>
 
@@ -1239,6 +1244,26 @@
 
       if (data.sessionName) {
         document.getElementById('serverSessionName').textContent = 'Session: ' + data.sessionName;
+      }
+
+      // Active Log Source Indicator
+      const logSourceEl = document.getElementById('logSourceText');
+      if (logSourceEl) {
+        if (data.activeLogFile) {
+          let modStr = '';
+          if (data.logLastModified && data.logLastModified !== '0001-01-01T00:00:00Z') {
+            const modDate = new Date(data.logLastModified);
+            const diffMs = Date.now() - modDate.getTime();
+            const diffMin = Math.round(diffMs / 60000);
+            if (diffMin < 1) modStr = ' (updated just now)';
+            else if (diffMin < 60) modStr = ` (updated ${diffMin}m ago)`;
+            else if (diffMin < 1440) modStr = ` (updated ${Math.floor(diffMin / 60)}h ago)`;
+            else modStr = ` (updated ${Math.floor(diffMin / 1440)}d ago)`;
+          }
+          logSourceEl.textContent = 'Source: ' + data.activeLogFile + modStr;
+        } else {
+          logSourceEl.textContent = 'Source: No active log file found (scanning /config/logs, /config/saved)';
+        }
       }
 
       // Latest metric point

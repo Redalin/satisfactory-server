@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -34,7 +35,9 @@ type SaveInfo struct {
 type LogParser struct {
 	mu            sync.RWMutex
 	logPaths      []string
+	customPaths   []string
 	activePath    string
+	lastModTime   time.Time
 	lastOffset    int64
 	events        []LogEvent
 	maxEvents     int
@@ -113,19 +116,32 @@ func NewLogParser(customPaths []string, maxEvents int) *LogParser {
 		maxEvents = 300
 	}
 
+	// Comprehensive candidate paths for Satisfactory dedicated server logs
+	// Ordered by standard container volume layout and local development fallbacks
 	paths := []string{
+		// 1. Live Satisfactory server container locations (/config volume mount)
+		"/config/logs/FactoryGame.log",
+		"/config/saved/Logs/FactoryGame.log",
+		"/config/Saved/Logs/FactoryGame.log",
 		"/config/gamefiles/FactoryGame/Saved/Logs/FactoryGame.log",
-		"./satisfactory-server/gamefiles/FactoryGame/Saved/Logs/FactoryGame.log",
+		"/config/FactoryGame/Saved/Logs/FactoryGame.log",
+		"/config/logs/*.log",
+		"/config/saved/Logs/*.log",
 		"/config/server.log",
+
+		// 2. Local relative directories (host development / direct mounts)
+		"./satisfactory-server/logs/FactoryGame.log",
+		"./satisfactory-server/saved/Logs/FactoryGame.log",
+		"./satisfactory-server/Saved/Logs/FactoryGame.log",
+		"./satisfactory-server/gamefiles/FactoryGame/Saved/Logs/FactoryGame.log",
+		"./logs/FactoryGame.log",
 		"./server.log",
 		"server.log",
-	}
-	if len(customPaths) > 0 {
-		paths = append(customPaths, paths...)
 	}
 
 	return &LogParser{
 		logPaths:      paths,
+		customPaths:   customPaths,
 		events:        make([]LogEvent, 0, maxEvents),
 		maxEvents:     maxEvents,
 		nextID:        1,
@@ -133,14 +149,60 @@ func NewLogParser(customPaths []string, maxEvents int) *LogParser {
 	}
 }
 
-// FindActiveLogFile locates the first available log file
+// FindActiveLogFile locates the most recently modified log file among candidates
 func (p *LogParser) FindActiveLogFile() string {
-	for _, path := range p.logPaths {
-		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
-			return path
+	// 1. If explicit custom paths were specified (e.g. LOG_FILE_PATH), prioritize them
+	if len(p.customPaths) > 0 {
+		for _, cp := range p.customPaths {
+			if fi, err := os.Stat(cp); err == nil && !fi.IsDir() {
+				return cp
+			}
 		}
 	}
-	return ""
+
+	// 2. Discover all existing candidate files and inspect their modification times
+	candidates := make(map[string]time.Time)
+
+	for _, pattern := range p.logPaths {
+		if strings.Contains(pattern, "*") {
+			matches, err := filepath.Glob(pattern)
+			if err == nil {
+				for _, match := range matches {
+					if fi, err := os.Stat(match); err == nil && !fi.IsDir() {
+						candidates[match] = fi.ModTime()
+					}
+				}
+			}
+		} else {
+			if fi, err := os.Stat(pattern); err == nil && !fi.IsDir() {
+				candidates[pattern] = fi.ModTime()
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	// 3. Choose the file with the newest modification time (the active live log)
+	var newestPath string
+	var newestTime time.Time
+
+	for path, modTime := range candidates {
+		if newestPath == "" || modTime.After(newestTime) {
+			newestPath = path
+			newestTime = modTime
+		}
+	}
+
+	return newestPath
+}
+
+// GetActiveLogSource returns the active log file path and its last modified time
+func (p *LogParser) GetActiveLogSource() (string, time.Time) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.activePath, p.lastModTime
 }
 
 // ProcessLogs scans new lines from the active log file
@@ -169,6 +231,7 @@ func (p *LogParser) ProcessLogs() int {
 	if err != nil {
 		return 0
 	}
+	p.lastModTime = fi.ModTime()
 
 	// Handle log truncation or rotation
 	if fi.Size() < p.lastOffset {
