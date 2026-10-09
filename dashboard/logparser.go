@@ -321,6 +321,9 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	}
 	if m := reNetRemoveClient.FindStringSubmatch(msg); len(m) > 1 {
 		addr := cleanAddr(m[1])
+		if len(p.onlinePlayers) == 1 {
+			p.onlinePlayers = make(map[string]time.Time)
+		}
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -331,6 +334,9 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	}
 	if m := reChannelCleanUp.FindStringSubmatch(msg); len(m) > 1 {
 		addr := cleanAddr(m[1])
+		if len(p.onlinePlayers) == 1 {
+			p.onlinePlayers = make(map[string]time.Time)
+		}
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -762,6 +768,13 @@ func (p *LogParser) GetOnlinePlayers() []string {
 		list = append(list, name)
 	}
 	return list
+}
+
+// ResetOnlinePlayers clears all tracked online players
+func (p *LogParser) ResetOnlinePlayers() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onlinePlayers = make(map[string]time.Time)
 }
 
 // GetLastSave returns the latest save event details

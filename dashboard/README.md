@@ -103,6 +103,8 @@ Then open `http://<your-host-ip>:8080` in your web browser.
 | `SERVER_API_URL` | `https://satisfactory-server:7777` | Internal HTTPS URL to the game server API |
 | `TARGET_CONTAINER` | `satisfactory-server` | Container name for reading Docker stats via `/var/run/docker.sock` |
 | `POLL_INTERVAL` | `5` | Metric sampling interval in seconds |
-| `API_TOKEN` | _(empty)_ | Optional Dedicated Server API Token for extended session information |
+| `API_TOKEN` | _(empty)_ | Optional Dedicated Server API Token for authenticated server state |
+| `SERVER_PASSWORD` / `server_password` | _(empty)_ | Dedicated Server password to query the API via `PasswordLogin` (can be placed in `.env`) |
+| `SERVER_NAME` | _(empty)_ | Optional friendly server name override |
 | `LOG_FILE_PATH` | _(empty)_ | Override path to the server log file if located outside standard paths |
 

@@ -48,8 +48,10 @@ services:
       - TARGET_CONTAINER=satisfactory-server
       - POLL_INTERVAL=5
       - SERVER_MEMORY_LIMIT_MB=8192
-      # Optional: Provide an API token from `server.GenerateAPIToken` for authenticated server state
-      # - API_TOKEN=
+      # Dedicated Server API authentication: reads server_password from .env or environment
+      - SERVER_PASSWORD=${SERVER_PASSWORD:-${server_password:-}}
+      # Optional: Provide an API token from `server.GenerateAPIToken`
+      # - API_TOKEN=${API_TOKEN:-}
     depends_on:
       - satisfactory-server
     restart: unless-stopped
