@@ -712,10 +712,10 @@
       <div class="stat-card players">
         <div class="stat-header">
           <span class="stat-title">Online Pioneers</span>
-          <span class="stat-unit" id="playerLimitLabel">Max 4</span>
+          <span class="stat-unit" id="playerLimitLabel">Limit: 4</span>
         </div>
         <div class="stat-value">
-          <span id="valPlayers">0</span><span class="stat-unit">Players</span>
+          <span id="valPlayers">0/4</span><span class="stat-unit">Pioneers</span>
         </div>
         <div class="stat-bar-track">
           <div class="stat-bar-fill players" id="barPlayers" style="width: 0%"></div>
@@ -756,10 +756,10 @@
             <div class="panel-tools">
               <!-- Timescale Selector: 1h, 24h, 7d, 30d -->
               <div class="btn-group">
-                <button class="btn-tool active" onclick="setTimeRange('1h')">1h</button>
-                <button class="btn-tool" onclick="setTimeRange('24h')">24h</button>
-                <button class="btn-tool" onclick="setTimeRange('7d')">7d</button>
-                <button class="btn-tool" onclick="setTimeRange('30d')">30d</button>
+                <button class="btn-tool active" data-range="1h" onclick="setTimeRange('1h')">1h</button>
+                <button class="btn-tool" data-range="24h" onclick="setTimeRange('24h')">24h</button>
+                <button class="btn-tool" data-range="7d" onclick="setTimeRange('7d')">7d</button>
+                <button class="btn-tool" data-range="30d" onclick="setTimeRange('30d')">30d</button>
               </div>
             </div>
           </div>
@@ -776,6 +776,9 @@
               <div class="legend-item">
                 <span class="legend-dot" style="background: rgba(255,255,255,0.3); border-top: 1px dashed #fff;"></span>
                 <span>4GB Reservation (50%)</span>
+              </div>
+              <div class="legend-item" style="margin-left: auto;">
+                <span id="timescaleLabelResource" style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">Timescale: Last 1 Hour (High-res)</span>
               </div>
             </div>
             <div class="chart-canvas-wrapper">
@@ -797,10 +800,31 @@
               </svg>
               Pioneer Activity Over Time
             </div>
-            <div class="refresh-rate" id="timescaleLabel">Timescale: Last 1 Hour</div>
+            <div class="panel-tools">
+              <!-- Timescale Selector: 1h, 24h, 7d, 30d -->
+              <div class="btn-group">
+                <button class="btn-tool active" data-range="1h" onclick="setTimeRange('1h')">1h</button>
+                <button class="btn-tool" data-range="24h" onclick="setTimeRange('24h')">24h</button>
+                <button class="btn-tool" data-range="7d" onclick="setTimeRange('7d')">7d</button>
+                <button class="btn-tool" data-range="30d" onclick="setTimeRange('30d')">30d</button>
+              </div>
+            </div>
           </div>
           <div class="chart-container">
-            <div class="chart-canvas-wrapper" style="height: 150px;">
+            <div class="chart-legend">
+              <div class="legend-item">
+                <span class="legend-dot" style="background: var(--accent-green);"></span>
+                <span id="playerLegendLabel">Online Pioneers</span>
+              </div>
+              <div class="legend-item">
+                <span class="legend-dot" style="background: rgba(16, 185, 129, 0.35); border-top: 1px dashed rgba(16, 185, 129, 0.9);"></span>
+                <span id="playerCapacityLegend">Server Capacity (4 Pioneers)</span>
+              </div>
+              <div class="legend-item" style="margin-left: auto;">
+                <span id="timescaleLabel" style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono);">Timescale: Last 1 Hour (High-res)</span>
+              </div>
+            </div>
+            <div class="chart-canvas-wrapper" style="height: 180px;">
               <canvas id="playerChart"></canvas>
               <div id="playerTooltip" class="chart-tooltip" style="opacity: 0;"></div>
             </div>
@@ -942,7 +966,8 @@
     function setTimeRange(range) {
       selectedTimeRange = range;
       document.querySelectorAll('.panel-tools .btn-tool').forEach(btn => {
-        btn.classList.toggle('active', btn.textContent.toLowerCase() === range);
+        const btnRange = btn.getAttribute('data-range') || btn.textContent.toLowerCase();
+        btn.classList.toggle('active', btnRange === range);
       });
 
       const labelMap = {
@@ -951,7 +976,11 @@
         '7d': 'Timescale: Last 7 Days (15-min buckets)',
         '30d': 'Timescale: Last 30 Days (Hourly buckets)'
       };
-      document.getElementById('timescaleLabel').textContent = labelMap[range] || ('Timescale: ' + range);
+      const text = labelMap[range] || ('Timescale: ' + range);
+      const l1 = document.getElementById('timescaleLabel');
+      if (l1) l1.textContent = text;
+      const l2 = document.getElementById('timescaleLabelResource');
+      if (l2) l2.textContent = text;
 
       fetchData();
     }
@@ -1000,7 +1029,7 @@
 
       ctx.clearRect(0, 0, width, height);
 
-      const padding = { top: 15, right: 20, bottom: 35, left: 40 };
+      const padding = { top: 15, right: 20, bottom: 35, left: 45 };
       const chartW = width - padding.left - padding.right;
       const chartH = height - padding.top - padding.bottom;
 
@@ -1117,50 +1146,96 @@
 
       ctx.clearRect(0, 0, width, height);
 
-      const padding = { top: 10, right: 20, bottom: 25, left: 40 };
+      const padding = { top: 15, right: 20, bottom: 35, left: 45 };
       const chartW = width - padding.left - padding.right;
       const chartH = height - padding.top - padding.bottom;
 
-      const maxPlayers = 4;
+      const playerLimit = (latestStatsData && latestStatsData.playerLimit) || 4;
+      const maxPlayers = Math.max(1, playerLimit);
+
+      // Determine clean Y-axis grid step
+      let step = 1;
+      if (maxPlayers > 16) step = Math.ceil(maxPlayers / 4);
+      else if (maxPlayers > 8) step = 4;
+      else if (maxPlayers > 4) step = 2;
+
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
       ctx.lineWidth = 1;
       ctx.fillStyle = '#5c687d';
       ctx.font = '10px monospace';
       ctx.textAlign = 'right';
 
-      for (let p = 0; p <= maxPlayers; p += 2) {
+      for (let p = 0; p <= maxPlayers; p += step) {
         const y = padding.top + chartH * (1 - p / maxPlayers);
         ctx.beginPath();
         ctx.moveTo(padding.left, y);
         ctx.lineTo(width - padding.right, y);
         ctx.stroke();
-        ctx.fillText(p + 'p', padding.left - 6, y + 3);
+        ctx.fillText(`${p}/${maxPlayers}`, padding.left - 6, y + 3);
       }
 
+      // If top boundary line not yet drawn by step
+      if (maxPlayers % step !== 0) {
+        const topY = padding.top;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, topY);
+        ctx.lineTo(width - padding.right, topY);
+        ctx.stroke();
+        ctx.fillText(`${maxPlayers}/${maxPlayers}`, padding.left - 6, topY + 3);
+      }
+
+      // Server capacity reference line (dashed green line at max capacity)
+      const capY = padding.top;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, capY);
+      ctx.lineTo(width - padding.right, capY);
+      ctx.stroke();
+      ctx.restore();
+
       const points = metricHistory;
-      if (!points || points.length < 2) return;
+      if (!points || points.length < 2) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#5c687d';
+        ctx.fillText('Accumulating metrics for this timescale...', width / 2, height / 2);
+        return;
+      }
 
       const stepX = chartW / (points.length - 1);
 
-      // Draw Player area & line
-      ctx.beginPath();
-      ctx.strokeStyle = '#10b981';
-      ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
-      ctx.lineWidth = 2;
+      // X-Axis Time Markers (draw ~4-6 time labels across width)
+      ctx.fillStyle = '#5c687d';
+      ctx.textAlign = 'center';
+      const labelInterval = Math.max(1, Math.floor(points.length / 5));
+      for (let i = 0; i < points.length; i += labelInterval) {
+        const x = padding.left + (i * stepX);
+        const pt = points[i];
+        if (pt && pt.timestamp) {
+          const lbl = formatTimeLabel(pt.timestamp, selectedTimeRange);
+          ctx.fillText(lbl, x, height - 10);
+        }
+      }
+
+      // Area fill beneath the curve
+      const grad = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+      grad.addColorStop(0, 'rgba(16, 185, 129, 0.22)');
+      grad.addColorStop(1, 'rgba(16, 185, 129, 0.02)');
+      ctx.fillStyle = grad;
 
       let firstX = padding.left;
       let lastX = firstX;
 
+      ctx.beginPath();
       points.forEach((p, idx) => {
         const x = padding.left + (idx * stepX);
         lastX = x;
-        const val = Math.min(maxPlayers, p.playerCount);
+        const val = Math.min(maxPlayers, Math.max(0, p.playerCount));
         const y = padding.top + chartH * (1 - val / maxPlayers);
         if (idx === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
-
-      // Area fill
       ctx.lineTo(lastX, padding.top + chartH);
       ctx.lineTo(firstX, padding.top + chartH);
       ctx.closePath();
@@ -1168,14 +1243,45 @@
 
       // Stroke line
       ctx.beginPath();
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2;
       points.forEach((p, idx) => {
         const x = padding.left + (idx * stepX);
-        const val = Math.min(maxPlayers, p.playerCount);
+        const val = Math.min(maxPlayers, Math.max(0, p.playerCount));
         const y = padding.top + chartH * (1 - val / maxPlayers);
         if (idx === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       });
       ctx.stroke();
+
+      // Draw Hover Indicator
+      if (hoveredIndex >= 0 && hoveredIndex < points.length) {
+        const hx = padding.left + (hoveredIndex * stepX);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(hx, padding.top);
+        ctx.lineTo(hx, padding.top + chartH);
+        ctx.stroke();
+
+        // Draw dot on the player line
+        const hp = points[hoveredIndex];
+        const val = Math.min(maxPlayers, Math.max(0, hp.playerCount));
+        const playerY = padding.top + chartH * (1 - val / maxPlayers);
+
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#10b981';
+        ctx.beginPath();
+        ctx.arc(hx, playerY, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Interactive Hover Tracking on Canvas
@@ -1188,13 +1294,14 @@
         if (!metricHistory || metricHistory.length < 2) return;
         const rect = canvas.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
-        const padding = { left: 40, right: 20 };
+        const padding = { left: 45, right: 20 };
         const chartW = rect.width - padding.left - padding.right;
 
         if (mouseX < padding.left || mouseX > rect.width - padding.right) {
           tooltip.style.opacity = '0';
           hoveredIndex = -1;
           renderResourceChart();
+          renderPlayerChart();
           return;
         }
 
@@ -1211,33 +1318,55 @@
           dateStr = dateObj.toLocaleDateString() + ' ' + dateObj.toLocaleTimeString();
         }
 
-        tooltip.innerHTML = `
-          <div class="tooltip-date">${dateStr}</div>
-          <div class="tooltip-row">
-            <span style="color: var(--ficsit-orange);">CPU:</span>
-            <strong>${pt.cpuPercent.toFixed(1)}%</strong>
-          </div>
-          <div class="tooltip-row">
-            <span style="color: var(--accent-cyan);">RAM:</span>
-            <strong>${(pt.memoryUsedMB / 1024).toFixed(2)} GB (${pt.memoryPercent.toFixed(1)}%)</strong>
-          </div>
-          <div class="tooltip-row">
-            <span style="color: var(--accent-green);">Pioneers:</span>
-            <strong>${pt.playerCount}</strong>
-          </div>
-        `;
+        const playerLimit = (latestStatsData && latestStatsData.playerLimit) || 4;
+
+        if (canvasId === 'playerChart') {
+          tooltip.innerHTML = `
+            <div class="tooltip-date">${dateStr}</div>
+            <div class="tooltip-row">
+              <span style="color: var(--accent-green);">Pioneers:</span>
+              <strong>${pt.playerCount} / ${playerLimit}</strong>
+            </div>
+            <div class="tooltip-row">
+              <span style="color: var(--text-muted);">Capacity:</span>
+              <strong>${Math.round((pt.playerCount / playerLimit) * 100)}%</strong>
+            </div>
+            <div class="tooltip-row">
+              <span style="color: var(--text-dim);">Timescale:</span>
+              <span>${selectedTimeRange}</span>
+            </div>
+          `;
+        } else {
+          tooltip.innerHTML = `
+            <div class="tooltip-date">${dateStr}</div>
+            <div class="tooltip-row">
+              <span style="color: var(--ficsit-orange);">CPU:</span>
+              <strong>${pt.cpuPercent.toFixed(1)}%</strong>
+            </div>
+            <div class="tooltip-row">
+              <span style="color: var(--accent-cyan);">RAM:</span>
+              <strong>${(pt.memoryUsedMB / 1024).toFixed(2)} GB (${pt.memoryPercent.toFixed(1)}%)</strong>
+            </div>
+            <div class="tooltip-row">
+              <span style="color: var(--accent-green);">Pioneers:</span>
+              <strong>${pt.playerCount} / ${playerLimit}</strong>
+            </div>
+          `;
+        }
 
         tooltip.style.left = mouseX + 'px';
         tooltip.style.top = Math.max(20, e.clientY - rect.top) + 'px';
         tooltip.style.opacity = '1';
 
         renderResourceChart();
+        renderPlayerChart();
       });
 
       canvas.addEventListener('mouseleave', () => {
         tooltip.style.opacity = '0';
         hoveredIndex = -1;
         renderResourceChart();
+        renderPlayerChart();
       });
     }
 
@@ -1414,6 +1543,9 @@
         document.getElementById('barCPU').style.width = Math.min(100, cpu) + '%';
         if (cpu > peakCPU) peakCPU = cpu;
         document.getElementById('valCPUPeak').textContent = 'Peak: ' + peakCPU.toFixed(1) + '%';
+        if (data.engineType) {
+          document.getElementById('cpuCoresLabel').textContent = data.engineType;
+        }
 
         const memMB = latest.memoryUsedMB || 0;
         const memGB = (memMB / 1024).toFixed(2);
@@ -1427,9 +1559,15 @@
         document.getElementById('memLimitLabel').textContent = 'Limit: ' + limitGB + ' GB';
 
         // Players
+        const playerLimit = data.playerLimit || 4;
         const players = latest.playerCount || 0;
-        document.getElementById('valPlayers').textContent = players;
-        document.getElementById('barPlayers').style.width = ((players / 4) * 100) + '%';
+        document.getElementById('valPlayers').textContent = `${players}/${playerLimit}`;
+        document.getElementById('barPlayers').style.width = Math.min(100, (players / playerLimit) * 100) + '%';
+        const plLabel = document.getElementById('playerLimitLabel');
+        if (plLabel) plLabel.textContent = 'Limit: ' + playerLimit;
+
+        const capLegend = document.getElementById('playerCapacityLegend');
+        if (capLegend) capLegend.textContent = `Server Capacity (${playerLimit} Pioneers)`;
 
         if (data.onlinePlayerNames && data.onlinePlayerNames.length > 0) {
           document.getElementById('activePioneersList').textContent = data.onlinePlayerNames.join(', ');
@@ -1524,6 +1662,7 @@
 
     // Initialize Hover Listeners
     attachChartHover('resourceChart', 'resourceTooltip');
+    attachChartHover('playerChart', 'playerTooltip');
 
     // Initialize UTC Toggle from stored preference
     initUTCToggle();

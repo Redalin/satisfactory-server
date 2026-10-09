@@ -17,13 +17,14 @@ import (
 var indexHTML []byte
 
 type AppConfig struct {
-	Port            string
-	ServerAPIURL    string
-	APIToken        string
-	TargetContainer string
-	CustomLogPath   string
-	DataDir         string
-	PollInterval    time.Duration
+	Port               string
+	ServerAPIURL       string
+	APIToken           string
+	TargetContainer    string
+	CustomLogPath      string
+	DataDir            string
+	PollInterval       time.Duration
+	DefaultPlayerLimit int
 }
 
 func loadConfig() AppConfig {
@@ -55,14 +56,22 @@ func loadConfig() AppConfig {
 		}
 	}
 
+	maxPlayers := 4
+	if s := os.Getenv("MAXPLAYERS"); s != "" {
+		if val, err := strconv.Atoi(s); err == nil && val > 0 {
+			maxPlayers = val
+		}
+	}
+
 	return AppConfig{
-		Port:            port,
-		ServerAPIURL:    apiURL,
-		APIToken:        os.Getenv("API_TOKEN"),
-		TargetContainer: containerName,
-		CustomLogPath:   os.Getenv("LOG_FILE_PATH"),
-		DataDir:         dataDir,
-		PollInterval:    time.Duration(pollSec) * time.Second,
+		Port:               port,
+		ServerAPIURL:       apiURL,
+		APIToken:           os.Getenv("API_TOKEN"),
+		TargetContainer:    containerName,
+		CustomLogPath:      os.Getenv("LOG_FILE_PATH"),
+		DataDir:            dataDir,
+		PollInterval:       time.Duration(pollSec) * time.Second,
+		DefaultPlayerLimit: maxPlayers,
 	}
 }
 
@@ -71,6 +80,8 @@ type ServerStateSummary struct {
 	IsGameRunning     bool          `json:"isGameRunning"`
 	SessionName       string        `json:"sessionName"`
 	TotalGameDuration float64       `json:"totalGameDuration"`
+	PlayerLimit       int           `json:"playerLimit"`
+	EngineType        string        `json:"engineType"`
 	Latest            MetricPoint   `json:"latest"`
 	History           []MetricPoint `json:"history"`
 	OnlinePlayerNames []string      `json:"onlinePlayerNames"`
@@ -137,11 +148,14 @@ func main() {
 }
 
 func (app *ServerApp) startLogTailer() {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		app.logParser.ProcessLogs()
+		if n := app.logParser.ProcessLogs(); n > 0 {
+			// Immediately sample metrics so player join/leave events update the graph immediately
+			app.sampleMetrics()
+		}
 	}
 }
 
@@ -175,12 +189,19 @@ func (app *ServerApp) sampleMetrics() {
 	var apiPlayerCount = -1
 	var isGameRunning bool
 	var totalGameDuration float64
+	playerLimit := app.config.DefaultPlayerLimit
+	if playerLimit <= 0 {
+		playerLimit = 4
+	}
 
 	if app.config.APIToken != "" {
 		if stateResp, err := app.apiClient.QueryState(); err == nil && stateResp != nil {
 			isHealthy = true
 			sessionName = stateResp.Data.ServerGameState.ActiveSessionName
 			apiPlayerCount = stateResp.Data.ServerGameState.NumConnectedPlayers
+			if stateResp.Data.ServerGameState.PlayerLimit > 0 {
+				playerLimit = stateResp.Data.ServerGameState.PlayerLimit
+			}
 			isGameRunning = stateResp.Data.ServerGameState.IsGameRunning
 			totalGameDuration = stateResp.Data.ServerGameState.TotalGameDuration
 		}
@@ -238,6 +259,8 @@ func (app *ServerApp) sampleMetrics() {
 		IsGameRunning:     isGameRunning,
 		SessionName:       sessionName,
 		TotalGameDuration: totalGameDuration,
+		PlayerLimit:       playerLimit,
+		EngineType:        app.collector.GetEngineType(),
 		Latest:            pt,
 		History:           app.collector.GetHistory("1h"),
 		OnlinePlayerNames: onlinePlayers,

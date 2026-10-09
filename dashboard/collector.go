@@ -37,26 +37,24 @@ type Collector struct {
 	dataFilePath    string
 	dockerClient    *http.Client
 	hasDockerSock   bool
+	engineType      string // "Docker", "Podman", "PID (Shared Namespace)", or "Host"
+	socketPath      string
 	prevHostTotal   uint64
 	prevHostIdle    uint64
+	prevProcTicks   uint64
+	prevProcTime    time.Time
 	lastLongTermAdd time.Time
 }
 
-// NewCollector initializes the resource collector with 30-day tiered retention
+// NewCollector initializes the resource collector with auto-detection for Docker, Podman, and PID namespaces
 func NewCollector(containerName, dataDir string) *Collector {
-	_, err := os.Stat("/var/run/docker.sock")
-	hasSock := err == nil
+	sockPath, dClient, engine := detectContainerSocket()
+	hasSock := dClient != nil
 
-	var dClient *http.Client
 	if hasSock {
-		dClient = &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, "unix", "/var/run/docker.sock")
-				},
-			},
-			Timeout: 4 * time.Second,
-		}
+		log.Printf("[Collector] Connected to %s socket at %s", engine, sockPath)
+	} else {
+		log.Printf("[Collector] No container socket found. Will monitor via shared PID namespace (/proc) or system metrics.")
 	}
 
 	// Determine data storage directory
@@ -79,10 +77,99 @@ func NewCollector(containerName, dataDir string) *Collector {
 		dataFilePath:    dataPath,
 		dockerClient:    dClient,
 		hasDockerSock:   hasSock,
+		socketPath:      sockPath,
+		engineType:      engine,
 	}
 
 	c.loadHistoryFromDisk()
 	return c
+}
+
+// detectContainerSocket probes common socket paths and identifies Docker vs Podman
+func detectContainerSocket() (string, *http.Client, string) {
+	candidates := []string{
+		os.Getenv("CONTAINER_SOCKET"),
+		os.Getenv("DOCKER_SOCKET"),
+	}
+
+	if h := os.Getenv("DOCKER_HOST"); strings.HasPrefix(h, "unix://") {
+		candidates = append(candidates, strings.TrimPrefix(h, "unix://"))
+	}
+
+	candidates = append(candidates,
+		"/var/run/docker.sock",
+		"/run/podman/podman.sock",
+		"/var/run/podman/podman.sock",
+		"/run/docker.sock",
+	)
+
+	// Check for any user rootless podman sockets: e.g. /run/user/1000/podman/podman.sock
+	if matches, err := filepath.Glob("/run/user/*/podman/podman.sock"); err == nil && len(matches) > 0 {
+		candidates = append(candidates, matches...)
+	}
+
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue
+		}
+		// Skip regular files if accidentally created as a file
+		if fi.Mode()&os.ModeSocket == 0 && fi.Mode().IsRegular() {
+			continue
+		}
+
+		targetPath := p
+		client := &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return (&net.Dialer{}).DialContext(ctx, "unix", targetPath)
+				},
+			},
+			Timeout: 3 * time.Second,
+		}
+
+		// Query version to test connectivity and detect Docker vs Podman
+		engine := probeEngine(client)
+		if engine != "" {
+			return targetPath, client, engine
+		}
+	}
+
+	return "", nil, ""
+}
+
+// probeEngine queries the daemon's /version endpoint to detect Docker or Podman
+func probeEngine(client *http.Client) string {
+	resp, err := client.Get("http://localhost/version")
+	if err != nil {
+		if pingResp, pingErr := client.Get("http://localhost/_ping"); pingErr == nil {
+			pingResp.Body.Close()
+			return "Docker"
+		}
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "Container Engine"
+	}
+	bodyStr := strings.ToLower(string(body))
+
+	if strings.Contains(bodyStr, "podman") {
+		return "Podman"
+	}
+	if strings.Contains(bodyStr, "docker") {
+		return "Docker"
+	}
+	return "Container Engine"
 }
 
 // loadHistoryFromDisk loads existing 30-day metrics on startup
@@ -145,9 +232,10 @@ func (c *Collector) AddPoint(p MetricPoint) {
 	}
 	c.recentHistory = append(c.recentHistory, p)
 
-	// 2. Long-term buffer (every 5 minutes or first point)
+	// 2. Long-term buffer (every 5 minutes or whenever player count changes)
 	now := p.Timestamp
-	if c.lastLongTermAdd.IsZero() || now.Sub(c.lastLongTermAdd) >= 5*time.Minute {
+	playerCountChanged := len(c.longTermHistory) > 0 && c.longTermHistory[len(c.longTermHistory)-1].PlayerCount != p.PlayerCount
+	if c.lastLongTermAdd.IsZero() || playerCountChanged || now.Sub(c.lastLongTermAdd) >= 5*time.Minute {
 		c.lastLongTermAdd = now
 
 		// Remove points older than 30 days
@@ -301,7 +389,7 @@ func downsample(pts []MetricPoint, targetCount int) []MetricPoint {
 	return result
 }
 
-// CollectStats gathers current stats from Docker socket or system fallbacks
+// CollectStats gathers current stats from Docker/Podman socket, shared PID namespace, or system fallbacks
 func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 	pt := MetricPoint{
 		Timestamp:     time.Now(),
@@ -309,7 +397,7 @@ func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 		ServerHealthy: isHealthy,
 	}
 
-	// 1. Try Docker socket first if available
+	// 1. Try Docker / Podman socket first if available
 	if c.hasDockerSock && c.dockerClient != nil {
 		if cpu, memUsed, memLimit, err := c.collectFromDocker(); err == nil {
 			pt.CPUPercent = cpu
@@ -323,8 +411,28 @@ func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 		}
 	}
 
-	// 2. Fallback to /proc or cgroups
+	// 2. Try shared PID namespace (/proc) to inspect FactoryServer directly
+	if cpu, memUsed, memLimit, ok := c.collectFromProcesses(); ok {
+		c.mu.Lock()
+		c.engineType = "PID (Shared)"
+		c.mu.Unlock()
+		pt.CPUPercent = cpu
+		pt.MemoryUsedMB = memUsed
+		pt.MemoryLimitMB = memLimit
+		if memLimit > 0 {
+			pt.MemoryPercent = (memUsed / memLimit) * 100.0
+		}
+		c.AddPoint(pt)
+		return pt
+	}
+
+	// 3. Fallback to /proc/stat and host meminfo
 	cpu, memUsed, memLimit := c.collectFromSystem()
+	c.mu.Lock()
+	if c.engineType == "" {
+		c.engineType = "Host"
+	}
+	c.mu.Unlock()
 	pt.CPUPercent = cpu
 	pt.MemoryUsedMB = memUsed
 	pt.MemoryLimitMB = memLimit
@@ -334,6 +442,121 @@ func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 
 	c.AddPoint(pt)
 	return pt
+}
+
+// collectFromProcesses inspects the shared PID namespace (/proc) to directly measure FactoryServer
+func (c *Collector) collectFromProcesses() (float64, float64, float64, bool) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return 0, 0, 0, false
+	}
+
+	var totalVmRSS float64
+	var totalTicks uint64
+	foundGameProc := false
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+
+		commBytes, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+		comm := strings.TrimSpace(string(commBytes))
+
+		cmdlineBytes, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		cmdline := string(cmdlineBytes)
+
+		// Check if it is the FactoryServer dedicated server or game process
+		isGame := strings.Contains(comm, "FactoryServer") ||
+			strings.Contains(comm, "FactoryGame") ||
+			strings.Contains(cmdline, "FactoryServer") ||
+			strings.Contains(cmdline, "FactoryGame") ||
+			(strings.Contains(cmdline, "satisfactory") && !strings.Contains(cmdline, "satisfactory-dashboard"))
+
+		if !isGame {
+			continue
+		}
+
+		foundGameProc = true
+
+		// Read VmRSS from /proc/[pid]/status
+		if statusBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+			for _, line := range strings.Split(string(statusBytes), "\n") {
+				if strings.HasPrefix(line, "VmRSS:") {
+					fields := strings.Fields(line)
+					if len(fields) >= 2 {
+						if kb, err := strconv.ParseFloat(fields[1], 64); err == nil {
+							totalVmRSS += kb / 1024.0
+						}
+					}
+					break
+				}
+			}
+		}
+
+		// Read CPU ticks from /proc/[pid]/stat
+		if statBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+			s := string(statBytes)
+			if idx := strings.LastIndex(s, ")"); idx != -1 && idx+2 < len(s) {
+				fields := strings.Fields(s[idx+2:])
+				if len(fields) > 12 {
+					u, _ := strconv.ParseUint(fields[11], 10, 64)
+					st, _ := strconv.ParseUint(fields[12], 10, 64)
+					totalTicks += u + st
+				}
+			}
+		}
+	}
+
+	if !foundGameProc {
+		return 0, 0, 0, false
+	}
+
+	now := time.Now()
+	var cpuPercent float64
+	if !c.prevProcTime.IsZero() && c.prevProcTicks > 0 && totalTicks >= c.prevProcTicks {
+		elapsedSec := now.Sub(c.prevProcTime).Seconds()
+		if elapsedSec > 0 {
+			tickDelta := totalTicks - c.prevProcTicks
+			cpuPercent = (float64(tickDelta) / 100.0 / elapsedSec) * 100.0
+		}
+	}
+	c.prevProcTicks = totalTicks
+	c.prevProcTime = now
+
+	// Memory Limit
+	memLimitMB := 8192.0
+	if envLimit := os.Getenv("SERVER_MEMORY_LIMIT_MB"); envLimit != "" {
+		if val, err := strconv.ParseFloat(envLimit, 64); err == nil && val > 0 {
+			memLimitMB = val
+		}
+	} else if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		val := strings.TrimSpace(string(data))
+		if val != "max" {
+			if bytesVal, err := strconv.ParseUint(val, 10, 64); err == nil && bytesVal > 0 {
+				memLimitMB = float64(bytesVal) / (1024 * 1024)
+			}
+		}
+	}
+
+	return round2(cpuPercent), round2(totalVmRSS), round2(memLimitMB), true
+}
+
+// GetEngineType returns the detected container or host monitoring mode
+func (c *Collector) GetEngineType() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.engineType != "" {
+		return c.engineType
+	}
+	if c.hasDockerSock {
+		return "Container"
+	}
+	return "Host"
 }
 
 type dockerContainerStats struct {

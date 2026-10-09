@@ -28,18 +28,26 @@ services:
       context: ./dashboard
     ports:
       - '3045:3045'
+    # Share PID namespace with satisfactory-server to directly monitor game process memory (e.g. 981MB) and CPU.
+    # This works out of the box in both Docker and Podman (rootless & rootful) without host socket permission issues.
+    pid: 'service:satisfactory-server'
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
       - satisfactory-data:/config:ro
       # Persistent volume for 30-day metrics history
       - dashboard-data:/data
-      # Mount Docker/Podman socket for container-level stats
-      - '/var/run/docker.sock:/var/run/docker.sock:ro'
+      # Optional container engine socket mount:
+      # The dashboard automatically detects Docker or Podman sockets when mounted.
+      # - Docker:
+      #   - '/var/run/docker.sock:/var/run/docker.sock:ro'
+      # - Rootless Podman (after running `systemctl --user enable --now podman.socket`):
+      #   - '${XDG_RUNTIME_DIR}/podman/podman.sock:/run/podman/podman.sock:ro'
     environment:
       - PORT=3045
       - SERVER_API_URL=https://satisfactory-server:7777
       - TARGET_CONTAINER=satisfactory-server
       - POLL_INTERVAL=5
+      - SERVER_MEMORY_LIMIT_MB=8192
       # Optional: Provide an API token from `server.GenerateAPIToken` for authenticated server state
       # - API_TOKEN=
     depends_on:
