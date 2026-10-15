@@ -527,42 +527,55 @@ var knownMilestones = map[string]string{
 	"schematic_2-2": "Obstacle Clearing",
 	"schematic_2-3": "Jump Pads",
 	"schematic_2-4": "Resource Sink Bonus Program",
+	"schematic_2-5": "Logistics Mk.2",
 
 	// Tier 3
 	"schematic_3-1": "Coal Power",
 	"schematic_3-2": "Vehicular Transport",
 	"schematic_3-3": "Basic Steel Production",
+	"schematic_3-4": "Enhanced Asset Security",
 
 	// Tier 4
-	"schematic_4-1": "Advanced Steel Production",
-	"schematic_4-2": "Expanded Power Infrastructure",
+	"schematic_4-1": "FICSIT Blueprints",
+	"schematic_4-2": "Logistics Mk.3",
+	"schematic_4-3": "Advanced Steel Production",
+	"schematic_4-4": "Expanded Power Infrastructure",
+	"schematic_4-5": "Hypertubes",
 
 	// Tier 5
-	"schematic_5-1": "Oil Processing",
-	"schematic_5-2": "Industrial Manufacturing",
-	"schematic_5-3": "Alternative Fluid Transport",
+	"schematic_5-1": "Jetpack",
+	"schematic_5-2": "Oil Processing",
+	"schematic_5-3": "Logistics Mk.4",
+	"schematic_5-4": "Fluid Packaging", 
+	"schematic_5-5": "Petroleum Power",
 
 	// Tier 6
-	"schematic_6-1": "Gas Power",
-	"schematic_6-2": "Expanded Packaging",
-	"schematic_6-3": "Pipeline Engineering Mk.2",
+	"schematic_6-1": "Industrial Manufacturing",
+	"schematic_6-2": "Monorail Train Technology",
+	"schematic_6-3": "Railway Signalling",
+	"schematic_6-4": "Pipeline Engineering Mk.2",
+	"schematic_6-5": "FICSIT Blueprints Mk.2",
 
 	// Tier 7
 	"schematic_7-1": "Bauxite Refinement",
-	"schematic_7-2": "Logistics Mk.5",
-	"schematic_7-3": "Aeronautical Engineering",
+	"schematic_7-2": "Hoverpack",
+	"schematic_7-3": "Logistics Mk.5" 
+	"schematic_7-4": "Hazmat Suit",
+	"schematic_7-5": "Control System Development",
 
 	// Tier 8
-	"schematic_8-1": "Nuclear Power",
-	"schematic_8-2": "Advanced Aluminum Production",
-	"schematic_8-3": "Leading-Edge Production",
-	"schematic_8-4": "Particle Enrichment",
+	"schematic_8-1": "Aeronautical Engineering",
+	"schematic_8-2": "Nuclear Power",
+	"schematic_8-3": "Advanced Aluminum Production",
+	"schematic_8-4": "Leading-Edge Production",
+	"schematic_8-5": "Particle Enrichment",
 
 	// Tier 9
 	"schematic_9-1": "Matter Conversion",
 	"schematic_9-2": "Quantum Encoding",
-	"schematic_9-3": "Spatial Energy Regulation",
-	"schematic_9-4": "Peak Efficiency",
+	"schematic_9-3": "FICSIT Blueprints Mk.3",	
+	"schematic_9-4": "Spatial Energy Regulation",
+	"schematic_9-5": "Peak Efficiency",
 }
 
 // CleanSchematicName converts raw Unreal Engine schematic asset paths to clean milestone names
