@@ -16,6 +16,9 @@ import (
 //go:embed web/index.html
 var indexHTML []byte
 
+//go:embed web/style.css
+var styleCSS []byte
+
 type AppConfig struct {
 	Port               string
 	ServerAPIURL       string
@@ -224,6 +227,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("/style.css", app.handleStyle)
+	mux.HandleFunc("/web/style.css", app.handleStyle)
 	mux.HandleFunc("/", app.handleIndex)
 
 	server := &http.Server{
@@ -415,6 +420,12 @@ func (app *ServerApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Write(indexHTML)
 }
 
+func (app *ServerApp) handleStyle(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(styleCSS)
+}
+
 func (app *ServerApp) handleStats(w http.ResponseWriter, r *http.Request) {
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
@@ -559,7 +570,7 @@ var knownMilestones = map[string]string{
 	// Tier 7
 	"schematic_7-1": "Bauxite Refinement",
 	"schematic_7-2": "Hoverpack",
-	"schematic_7-3": "Logistics Mk.5" 
+	"schematic_7-3": "Logistics Mk.5",
 	"schematic_7-4": "Hazmat Suit",
 	"schematic_7-5": "Control System Development",
 
