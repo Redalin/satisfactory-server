@@ -148,7 +148,7 @@
           <span id="valSaveAgo">Checking...</span>
         </div>
         <div class="stat-footer" style="margin-top: auto;">
-          <span id="valSaveFile" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 220px;">--</span>
+          <span id="valSaveFile" style="text-overflow: ellipsis; overflow: hidden; white-space: nowrap; max-width: 100%; display: inline-block;">--</span>
         </div>
       </div>
     </section>
@@ -156,7 +156,7 @@
     <!-- Main Graphs & Events Layout -->
     <div class="content-grid">
       <!-- Left Column: Graphs -->
-      <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+      <div class="graphs-column">
         <!-- Resource Utilization Graph -->
         <div class="panel">
           <div class="panel-header">
@@ -275,7 +275,7 @@
       </div>
 
       <!-- Right Column: Key Event Stream -->
-      <div class="panel" style="height: 100%;">
+      <div class="panel events-column">
         <div class="panel-header">
           <div class="panel-title">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -411,11 +411,13 @@
     function setupCanvas(canvas) {
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      const width = Math.max(0, Math.floor(rect.width));
+      const height = Math.max(0, Math.floor(rect.height));
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
-      return { ctx, width: rect.width, height: rect.height };
+      return { ctx, width, height };
     }
 
     function formatTimeLabel(dateStr, range) {
@@ -439,10 +441,16 @@
       const canvas = document.getElementById('resourceChart');
       if (!canvas) return;
       const { ctx, width, height } = setupCanvas(canvas);
+      if (width <= 0 || height <= 0) return;
 
       ctx.clearRect(0, 0, width, height);
 
-      const padding = { top: 15, right: 20, bottom: 35, left: 45 };
+      const padding = {
+        top: 15,
+        right: width < 400 ? 12 : 20,
+        bottom: 35,
+        left: width < 400 ? 38 : 45
+      };
       const chartW = width - padding.left - padding.right;
       const chartH = height - padding.top - padding.bottom;
 
@@ -484,10 +492,11 @@
 
       const stepX = chartW / (points.length - 1);
 
-      // X-Axis Time Markers (draw ~4-6 time labels across width)
+      // X-Axis Time Markers (responsive label count to prevent overlapping)
       ctx.fillStyle = '#5c687d';
       ctx.textAlign = 'center';
-      const labelInterval = Math.max(1, Math.floor(points.length / 5));
+      const maxLabels = width < 420 ? 3 : 5;
+      const labelInterval = Math.max(1, Math.floor(points.length / maxLabels));
       for (let i = 0; i < points.length; i += labelInterval) {
         const x = padding.left + (i * stepX);
         const pt = points[i];
@@ -556,10 +565,16 @@
       const canvas = document.getElementById('playerChart');
       if (!canvas) return;
       const { ctx, width, height } = setupCanvas(canvas);
+      if (width <= 0 || height <= 0) return;
 
       ctx.clearRect(0, 0, width, height);
 
-      const padding = { top: 15, right: 20, bottom: 35, left: 45 };
+      const padding = {
+        top: 15,
+        right: width < 400 ? 12 : 20,
+        bottom: 35,
+        left: width < 400 ? 38 : 45
+      };
       const chartW = width - padding.left - padding.right;
       const chartH = height - padding.top - padding.bottom;
 
@@ -618,10 +633,11 @@
 
       const stepX = chartW / (points.length - 1);
 
-      // X-Axis Time Markers (draw ~4-6 time labels across width)
+      // X-Axis Time Markers (responsive label count to prevent overlapping)
       ctx.fillStyle = '#5c687d';
       ctx.textAlign = 'center';
-      const labelInterval = Math.max(1, Math.floor(points.length / 5));
+      const maxLabels = width < 420 ? 3 : 5;
+      const labelInterval = Math.max(1, Math.floor(points.length / maxLabels));
       for (let i = 0; i < points.length; i += labelInterval) {
         const x = padding.left + (i * stepX);
         const pt = points[i];
@@ -697,20 +713,23 @@
       }
     }
 
-    // Interactive Hover Tracking on Canvas
+    // Interactive Hover & Touch Tracking on Canvas
     function attachChartHover(canvasId, tooltipId) {
       const canvas = document.getElementById(canvasId);
       const tooltip = document.getElementById(tooltipId);
       if (!canvas || !tooltip) return;
 
-      canvas.addEventListener('mousemove', (e) => {
+      function handlePointer(clientX, clientY) {
         if (!metricHistory || metricHistory.length < 2) return;
         const rect = canvas.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const padding = { left: 45, right: 20 };
-        const chartW = rect.width - padding.left - padding.right;
+        if (rect.width <= 0) return;
 
-        if (mouseX < padding.left || mouseX > rect.width - padding.right) {
+        const paddingLeft = rect.width < 400 ? 38 : 45;
+        const paddingRight = rect.width < 400 ? 12 : 20;
+        const chartW = rect.width - paddingLeft - paddingRight;
+        const mouseX = clientX - rect.left;
+
+        if (mouseX < paddingLeft || mouseX > rect.width - paddingRight) {
           tooltip.style.opacity = '0';
           hoveredIndex = -1;
           renderResourceChart();
@@ -718,7 +737,7 @@
           return;
         }
 
-        const ratio = (mouseX - padding.left) / chartW;
+        const ratio = (mouseX - paddingLeft) / chartW;
         hoveredIndex = Math.round(ratio * (metricHistory.length - 1));
         const pt = metricHistory[hoveredIndex];
         if (!pt) return;
@@ -767,20 +786,43 @@
           `;
         }
 
-        tooltip.style.left = mouseX + 'px';
-        tooltip.style.top = Math.max(20, e.clientY - rect.top) + 'px';
+        // Clamp tooltip X inside canvas wrapper so it never overflows screen edges
+        const tooltipHalfW = 85;
+        const clampedX = Math.max(tooltipHalfW, Math.min(rect.width - tooltipHalfW, mouseX));
+        tooltip.style.left = clampedX + 'px';
+        tooltip.style.top = Math.max(20, clientY - rect.top) + 'px';
         tooltip.style.opacity = '1';
 
         renderResourceChart();
         renderPlayerChart();
-      });
+      }
 
-      canvas.addEventListener('mouseleave', () => {
+      function hidePointer() {
         tooltip.style.opacity = '0';
         hoveredIndex = -1;
         renderResourceChart();
         renderPlayerChart();
+      }
+
+      canvas.addEventListener('mousemove', (e) => {
+        handlePointer(e.clientX, e.clientY);
       });
+
+      canvas.addEventListener('mouseleave', hidePointer);
+
+      canvas.addEventListener('touchstart', (e) => {
+        if (e.touches && e.touches.length > 0) {
+          handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+        }
+      }, { passive: true });
+
+      canvas.addEventListener('touchmove', (e) => {
+        if (e.touches && e.touches.length > 0) {
+          handlePointer(e.touches[0].clientX, e.touches[0].clientY);
+        }
+      }, { passive: true });
+
+      canvas.addEventListener('touchend', hidePointer);
     }
 
     function renderEventsList() {
@@ -1203,6 +1245,18 @@
       renderResourceChart();
       renderPlayerChart();
     });
+
+    // ResizeObserver ensures charts immediately scale whenever the container or screen width changes
+    if (window.ResizeObserver) {
+      const chartObserver = new ResizeObserver(() => {
+        renderResourceChart();
+        renderPlayerChart();
+      });
+      const resWrapper = document.getElementById('resourceChart')?.parentElement;
+      const plWrapper = document.getElementById('playerChart')?.parentElement;
+      if (resWrapper) chartObserver.observe(resWrapper);
+      if (plWrapper) chartObserver.observe(plWrapper);
+    }
 
     // Initialize Hover Listeners
     attachChartHover('resourceChart', 'resourceTooltip');
