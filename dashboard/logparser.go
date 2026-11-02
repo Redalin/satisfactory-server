@@ -2,15 +2,33 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+// PioneerSession tracks a single continuous session of a pioneer playing on the server
+type PioneerSession struct {
+	PlayerName string    `json:"playerName"`
+	JoinTime   time.Time `json:"joinTime"`
+	LeaveTime  time.Time `json:"leaveTime"` // IsZero() if session is currently active
+}
+
+// ActivePioneer represents a pioneer's activity summary over a requested timescale
+type ActivePioneer struct {
+	Name           string  `json:"name"`
+	OnlineSeconds  float64 `json:"onlineSeconds"`
+	OnlineDuration string  `json:"onlineDuration"`
+	IsOnline       bool    `json:"isOnline"`
+}
 
 // LogEvent represents a structured parsed event from server logs
 type LogEvent struct {
@@ -32,14 +50,16 @@ type SaveInfo struct {
 
 // LogParser monitors and extracts key events from Satisfactory logs
 type LogParser struct {
-	mu            sync.RWMutex
-	logPaths      []string
-	activePath    string
-	lastOffset    int64
-	events        []LogEvent
-	maxEvents     int
-	nextID        int
+	mu                sync.RWMutex
+	logPaths          []string
+	activePath        string
+	lastOffset        int64
+	events            []LogEvent
+	maxEvents         int
+	nextID            int
 	onlinePlayers     map[string]time.Time
+	sessions          []PioneerSession
+	sessionFilePath   string
 	lastSave          SaveInfo
 	activeSessionName string
 	isGameRunning     bool
@@ -113,8 +133,8 @@ var (
 	reIPPort = regexp.MustCompile(`([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})(?::(\d+))?`)
 )
 
-// NewLogParser creates a log parser with candidate log paths
-func NewLogParser(customPaths []string, maxEvents int) *LogParser {
+// NewLogParser creates a log parser with candidate log paths and historical session storage
+func NewLogParser(customPaths []string, maxEvents int, dataDir string) *LogParser {
 	if maxEvents <= 0 {
 		maxEvents = 300
 	}
@@ -130,13 +150,24 @@ func NewLogParser(customPaths []string, maxEvents int) *LogParser {
 		paths = append(customPaths, paths...)
 	}
 
-	return &LogParser{
-		logPaths:      paths,
-		events:        make([]LogEvent, 0, maxEvents),
-		maxEvents:     maxEvents,
-		nextID:        1,
-		onlinePlayers: make(map[string]time.Time),
+	if dataDir == "" {
+		dataDir = "/data"
 	}
+	_ = os.MkdirAll(dataDir, 0755)
+	sessionPath := filepath.Join(dataDir, "pioneer_sessions.json")
+
+	parser := &LogParser{
+		logPaths:        paths,
+		events:          make([]LogEvent, 0, maxEvents),
+		maxEvents:       maxEvents,
+		nextID:          1,
+		onlinePlayers:   make(map[string]time.Time),
+		sessions:        make([]PioneerSession, 0, 500),
+		sessionFilePath: sessionPath,
+	}
+
+	parser.loadSessionsFromDisk()
+	return parser
 }
 
 // FindActiveLogFile locates the first available log file
@@ -265,6 +296,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := rePlayerJoin1.FindStringSubmatch(msg); len(m) > 1 {
 		pName := cleanName(m[1])
 		p.onlinePlayers[pName] = eventTime
+		p.recordPlayerJoin(pName, eventTime)
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -276,6 +308,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := rePlayerJoin2.FindStringSubmatch(msg); len(m) > 1 {
 		pName := cleanName(m[1])
 		p.onlinePlayers[pName] = eventTime
+		p.recordPlayerJoin(pName, eventTime)
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -289,6 +322,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := rePlayerLeave1.FindStringSubmatch(msg); len(m) > 1 {
 		pName := cleanName(m[1])
 		delete(p.onlinePlayers, pName)
+		p.recordPlayerLeave(pName, eventTime)
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -300,6 +334,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := rePlayerLeave2.FindStringSubmatch(msg); len(m) > 1 {
 		pName := cleanName(m[1])
 		delete(p.onlinePlayers, pName)
+		p.recordPlayerLeave(pName, eventTime)
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -311,6 +346,7 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := rePlayerLeave3.FindStringSubmatch(msg); len(m) > 1 {
 		pName := cleanName(m[1])
 		delete(p.onlinePlayers, pName)
+		p.recordPlayerLeave(pName, eventTime)
 		return &LogEvent{
 			Timestamp:  eventTime,
 			TimeString: timeStr,
@@ -322,6 +358,9 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := reNetRemoveClient.FindStringSubmatch(msg); len(m) > 1 {
 		addr := cleanAddr(m[1])
 		if len(p.onlinePlayers) == 1 {
+			for singlePlayer := range p.onlinePlayers {
+				p.recordPlayerLeave(singlePlayer, eventTime)
+			}
 			p.onlinePlayers = make(map[string]time.Time)
 		}
 		return &LogEvent{
@@ -335,6 +374,9 @@ func (p *LogParser) parseLine(line string) *LogEvent {
 	if m := reChannelCleanUp.FindStringSubmatch(msg); len(m) > 1 {
 		addr := cleanAddr(m[1])
 		if len(p.onlinePlayers) == 1 {
+			for singlePlayer := range p.onlinePlayers {
+				p.recordPlayerLeave(singlePlayer, eventTime)
+			}
 			p.onlinePlayers = make(map[string]time.Time)
 		}
 		return &LogEvent{
@@ -770,12 +812,265 @@ func (p *LogParser) GetOnlinePlayers() []string {
 	return list
 }
 
-// ResetOnlinePlayers clears all tracked online players
+// recordPlayerJoin registers the start of a player session
+func (p *LogParser) recordPlayerJoin(name string, t time.Time) {
+	if name == "" {
+		return
+	}
+	// Avoid duplicate entries if log has duplicate lines within 2 seconds
+	for _, s := range p.sessions {
+		if s.PlayerName == name {
+			diff := s.JoinTime.Sub(t)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff < 2*time.Second {
+				return
+			}
+		}
+	}
+	// Close any previous open session for this player
+	for i := len(p.sessions) - 1; i >= 0; i-- {
+		if p.sessions[i].PlayerName == name && p.sessions[i].LeaveTime.IsZero() {
+			p.sessions[i].LeaveTime = t
+			break
+		}
+	}
+	p.sessions = append(p.sessions, PioneerSession{
+		PlayerName: name,
+		JoinTime:   t,
+	})
+}
+
+// recordPlayerLeave closes an active session for the given player
+func (p *LogParser) recordPlayerLeave(name string, t time.Time) {
+	if name == "" {
+		return
+	}
+	for i := len(p.sessions) - 1; i >= 0; i-- {
+		if p.sessions[i].PlayerName == name && p.sessions[i].LeaveTime.IsZero() {
+			p.sessions[i].LeaveTime = t
+			return
+		}
+	}
+}
+
+// ResetOnlinePlayers clears all tracked online players and marks open sessions as closed
 func (p *LogParser) ResetOnlinePlayers() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := time.Now()
+	for name := range p.onlinePlayers {
+		for i := len(p.sessions) - 1; i >= 0; i-- {
+			if p.sessions[i].PlayerName == name && p.sessions[i].LeaveTime.IsZero() {
+				p.sessions[i].LeaveTime = now
+				break
+			}
+		}
+	}
 	p.onlinePlayers = make(map[string]time.Time)
 }
+
+// loadSessionsFromDisk loads historical player sessions from disk
+func (p *LogParser) loadSessionsFromDisk() {
+	if p.sessionFilePath == "" {
+		return
+	}
+	data, err := os.ReadFile(p.sessionFilePath)
+	if err != nil {
+		return
+	}
+
+	var loaded []PioneerSession
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return
+	}
+
+	// Filter out sessions older than 30 days
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
+	valid := make([]PioneerSession, 0, len(loaded))
+	for _, s := range loaded {
+		if s.JoinTime.After(cutoff) {
+			valid = append(valid, s)
+		}
+	}
+	p.sessions = valid
+}
+
+// SaveSessionsToDisk writes historical player sessions to disk atomically
+func (p *LogParser) SaveSessionsToDisk() {
+	if p.sessionFilePath == "" {
+		return
+	}
+	p.mu.RLock()
+	dataCopy := make([]PioneerSession, len(p.sessions))
+	copy(dataCopy, p.sessions)
+	p.mu.RUnlock()
+
+	if len(dataCopy) == 0 {
+		return
+	}
+
+	encoded, err := json.Marshal(dataCopy)
+	if err != nil {
+		return
+	}
+
+	tmpFile := p.sessionFilePath + ".tmp"
+	if err := os.WriteFile(tmpFile, encoded, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmpFile, p.sessionFilePath)
+}
+
+// GetTopActivePioneers calculates total online time per pioneer for the requested timescale (1h, 24h, 7d, 30d)
+func (p *LogParser) GetTopActivePioneers(timeRange string, limit int) []ActivePioneer {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	now := time.Now()
+	var duration time.Duration
+	switch strings.ToLower(timeRange) {
+	case "24h", "1d":
+		duration = 24 * time.Hour
+	case "7d", "1w":
+		duration = 7 * 24 * time.Hour
+	case "30d", "1m":
+		duration = 30 * 24 * time.Hour
+	case "1h":
+		fallthrough
+	default:
+		duration = 1 * time.Hour
+	}
+
+	windowStart := now.Add(-duration)
+	windowEnd := now
+
+	timeMap := make(map[string]float64)
+
+	// Calculate overlap between each session and the selected window
+	for _, s := range p.sessions {
+		if s.PlayerName == "" {
+			continue
+		}
+		start := s.JoinTime
+		end := s.LeaveTime
+		if end.IsZero() {
+			if _, ok := p.onlinePlayers[s.PlayerName]; ok {
+				end = now
+			} else {
+				if now.Sub(start) > 24*time.Hour {
+					end = start.Add(2 * time.Hour)
+				} else {
+					end = now
+				}
+			}
+		}
+
+		oStart := start
+		if oStart.Before(windowStart) {
+			oStart = windowStart
+		}
+		oEnd := end
+		if oEnd.After(windowEnd) {
+			oEnd = windowEnd
+		}
+
+		if oEnd.After(oStart) {
+			overlapSec := oEnd.Sub(oStart).Seconds()
+			timeMap[s.PlayerName] += overlapSec
+		}
+	}
+
+	// Also account for currently online players if not already captured in sessions
+	for name, joinTime := range p.onlinePlayers {
+		if name == "" {
+			continue
+		}
+		hasOpenSession := false
+		for _, s := range p.sessions {
+			if s.PlayerName == name && s.LeaveTime.IsZero() {
+				hasOpenSession = true
+				break
+			}
+		}
+		if !hasOpenSession {
+			start := joinTime
+			end := now
+			oStart := start
+			if oStart.Before(windowStart) {
+				oStart = windowStart
+			}
+			oEnd := end
+			if oEnd.After(windowEnd) {
+				oEnd = windowEnd
+			}
+			if oEnd.After(oStart) {
+				timeMap[name] += oEnd.Sub(oStart).Seconds()
+			}
+		}
+	}
+
+	type playerDur struct {
+		name string
+		sec  float64
+	}
+	var list []playerDur
+	for name, sec := range timeMap {
+		if sec > 0 {
+			list = append(list, playerDur{name: name, sec: sec})
+		}
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].sec == list[j].sec {
+			return list[i].name < list[j].name
+		}
+		return list[i].sec > list[j].sec
+	})
+
+	if limit <= 0 {
+		limit = 4
+	}
+	if len(list) > limit {
+		list = list[:limit]
+	}
+
+	res := make([]ActivePioneer, 0, len(list))
+	for _, item := range list {
+		_, isOnline := p.onlinePlayers[item.name]
+		res = append(res, ActivePioneer{
+			Name:           item.name,
+			OnlineSeconds:  item.sec,
+			OnlineDuration: formatOnlineDuration(item.sec),
+			IsOnline:       isOnline,
+		})
+	}
+
+	return res
+}
+
+func formatOnlineDuration(totalSec float64) string {
+	if totalSec <= 0 {
+		return "0m"
+	}
+	sec := int(totalSec)
+	days := sec / 86400
+	hours := (sec % 86400) / 3600
+	mins := (sec % 3600) / 60
+
+	if days > 0 {
+		return fmt.Sprintf("%dd %dh %dm", days, hours, mins)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm", hours, mins)
+	}
+	if mins > 0 {
+		return fmt.Sprintf("%dm", mins)
+	}
+	return fmt.Sprintf("%ds", sec%60)
+}
+
 
 // GetLastSave returns the latest save event details
 func (p *LogParser) GetLastSave() SaveInfo {

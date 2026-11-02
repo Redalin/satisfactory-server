@@ -232,6 +232,7 @@
     .stat-card.cpu::after { background: var(--ficsit-orange); }
     .stat-card.mem::after { background: var(--accent-cyan); }
     .stat-card.players::after { background: var(--accent-green); }
+    .stat-card.active-pioneers::after { background: #f59e0b; }
     .stat-card.save::after { background: var(--accent-purple); }
     .stat-card.game::after { background: var(--accent-yellow); }
 
@@ -301,6 +302,100 @@
     .stat-footer span {
       min-width: 0;
       word-break: break-word;
+    }
+
+    /* Active Pioneers Card Components */
+    .pioneers-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-height: 80px;
+      justify-content: center;
+      min-width: 0;
+    }
+
+    .pioneers-empty {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+      text-align: center;
+      padding: 0.65rem 0;
+      font-style: italic;
+    }
+
+    .pioneer-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      min-width: 0;
+    }
+
+    .pioneer-row-main {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.82rem;
+      min-width: 0;
+    }
+
+    .pioneer-name-col {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .pioneer-rank {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .pioneer-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .pioneer-dot.online {
+      background: var(--accent-green);
+      box-shadow: 0 0 6px var(--accent-green);
+    }
+
+    .pioneer-name {
+      font-weight: 600;
+      color: var(--text-main);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .pioneer-duration {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--accent-yellow);
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
+    .pioneer-bar-track {
+      background: rgba(255, 255, 255, 0.05);
+      height: 3px;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .pioneer-bar-fill {
+      background: linear-gradient(90deg, #f59e0b, #fbbf24);
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.3s ease;
     }
 
     /* Server Overview Card (Top API Metrics) */

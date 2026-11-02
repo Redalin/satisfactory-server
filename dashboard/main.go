@@ -156,23 +156,24 @@ func loadConfig() AppConfig {
 }
 
 type ServerStateSummary struct {
-	ServerHealthy     bool          `json:"serverHealthy"`
-	IsGameRunning     bool          `json:"isGameRunning"`
-	ServerName        string        `json:"serverName"`
-	SessionName       string        `json:"sessionName"`
-	GameName          string        `json:"gameName"`
-	TechTier          int           `json:"techTier"`
-	ActiveSchematic   string        `json:"activeSchematic"`
-	GamePhase         string        `json:"gamePhase"`
-	AverageTickRate   float64       `json:"averageTickRate"`
-	TotalGameDuration float64       `json:"totalGameDuration"`
-	ConnectedPlayers  int           `json:"connectedPlayers"`
-	PlayerLimit       int           `json:"playerLimit"`
-	EngineType        string        `json:"engineType"`
-	Latest            MetricPoint   `json:"latest"`
-	History           []MetricPoint `json:"history"`
-	OnlinePlayerNames []string      `json:"onlinePlayerNames"`
-	LastSave          SaveInfo      `json:"lastSave"`
+	ServerHealthy     bool            `json:"serverHealthy"`
+	IsGameRunning     bool            `json:"isGameRunning"`
+	ServerName        string          `json:"serverName"`
+	SessionName       string          `json:"sessionName"`
+	GameName          string          `json:"gameName"`
+	TechTier          int             `json:"techTier"`
+	ActiveSchematic   string          `json:"activeSchematic"`
+	GamePhase         string          `json:"gamePhase"`
+	AverageTickRate   float64         `json:"averageTickRate"`
+	TotalGameDuration float64         `json:"totalGameDuration"`
+	ConnectedPlayers  int             `json:"connectedPlayers"`
+	PlayerLimit       int             `json:"playerLimit"`
+	EngineType        string          `json:"engineType"`
+	Latest            MetricPoint     `json:"latest"`
+	History           []MetricPoint   `json:"history"`
+	OnlinePlayerNames []string        `json:"onlinePlayerNames"`
+	ActivePioneers    []ActivePioneer `json:"activePioneers"`
+	LastSave          SaveInfo        `json:"lastSave"`
 }
 
 type ServerApp struct {
@@ -206,7 +207,7 @@ func main() {
 		config:       cfg,
 		apiClient:    NewAPIClient(cfg.ServerAPIURL, cfg.APIToken, cfg.ServerPassword),
 		collector:    NewCollector(cfg.TargetContainer, cfg.DataDir),
-		logParser:    NewLogParser(customPaths, 250),
+		logParser:    NewLogParser(customPaths, 250, cfg.DataDir),
 		savesScanner: NewSavesScanner(),
 	}
 
@@ -273,6 +274,7 @@ func (app *ServerApp) startPersistenceWorker() {
 
 	for range ticker.C {
 		app.collector.SaveHistoryToDisk()
+		app.logParser.SaveSessionsToDisk()
 	}
 }
 
@@ -405,6 +407,7 @@ func (app *ServerApp) sampleMetrics() {
 		Latest:            pt,
 		History:           app.collector.GetHistory("1h"),
 		OnlinePlayerNames: onlinePlayers,
+		ActivePioneers:    app.logParser.GetTopActivePioneers("1h", 4),
 		LastSave:          lastSave,
 	}
 	app.mu.Unlock()
@@ -444,8 +447,9 @@ func (app *ServerApp) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Supply history for the requested time range (1h, 24h, 7d, 30d)
+	// Supply history and active pioneers for the requested time range (1h, 24h, 7d, 30d)
 	state.History = app.collector.GetHistory(timeRange)
+	state.ActivePioneers = app.logParser.GetTopActivePioneers(timeRange, 4)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(state)

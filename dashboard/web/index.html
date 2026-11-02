@@ -138,6 +138,21 @@
         </div>
       </div>
 
+      <!-- Most Active Pioneers -->
+      <div class="stat-card active-pioneers">
+        <div class="stat-header">
+          <span class="stat-title">Most Active Pioneers</span>
+          <span class="stat-unit" id="pioneersTimeRangeLabel">Last 1 Hour</span>
+        </div>
+        <div class="pioneers-list" id="activePioneersContainer">
+          <div class="pioneers-empty">No pioneer activity in this period</div>
+        </div>
+        <div class="stat-footer">
+          <span id="pioneersTotalTime">Total: 0m</span>
+          <span id="pioneersActiveCount">0 pioneers</span>
+        </div>
+      </div>
+
       <!-- Last Save -->
       <div class="stat-card save">
         <div class="stat-header">
@@ -394,6 +409,15 @@
       if (l1) l1.textContent = text;
       const l2 = document.getElementById('timescaleLabelResource');
       if (l2) l2.textContent = text;
+
+      const pioneerRangeLabels = {
+        '1h': 'Last 1 Hour',
+        '24h': 'Last 24 Hours',
+        '7d': 'Last 7 Days',
+        '30d': 'Last 30 Days'
+      };
+      const pLabel = document.getElementById('pioneersTimeRangeLabel');
+      if (pLabel) pLabel.textContent = pioneerRangeLabels[range] || range;
 
       fetchData();
     }
@@ -1159,6 +1183,58 @@
           } else {
             pioneersListEl.textContent = players > 0 ? (players + ' pioneer(s) online') : 'No active players';
           }
+        }
+      }
+
+      // Most Active Pioneers (Top 4) in the selected timescale
+      const activePioneers = data.activePioneers || [];
+      const pioneersContainer = document.getElementById('activePioneersContainer');
+      const totalTimeEl = document.getElementById('pioneersTotalTime');
+      const activeCountEl = document.getElementById('pioneersActiveCount');
+      const rangeLabelEl = document.getElementById('pioneersTimeRangeLabel');
+
+      const pioneerRangeLabels = {
+        '1h': 'Last 1 Hour',
+        '24h': 'Last 24 Hours',
+        '7d': 'Last 7 Days',
+        '30d': 'Last 30 Days'
+      };
+      if (rangeLabelEl) {
+        rangeLabelEl.textContent = pioneerRangeLabels[selectedTimeRange] || selectedTimeRange;
+      }
+
+      if (pioneersContainer) {
+        if (!activePioneers || activePioneers.length === 0) {
+          pioneersContainer.innerHTML = '<div class="pioneers-empty">No pioneer activity in this period</div>';
+          if (totalTimeEl) totalTimeEl.textContent = 'Total: 0m';
+          if (activeCountEl) activeCountEl.textContent = '0 pioneers';
+        } else {
+          const maxSec = Math.max(...activePioneers.map(p => p.onlineSeconds || 0), 1);
+          let totalSec = 0;
+          pioneersContainer.innerHTML = activePioneers.slice(0, 4).map((p, idx) => {
+            totalSec += (p.onlineSeconds || 0);
+            const pct = Math.min(100, Math.round(((p.onlineSeconds || 0) / maxSec) * 100));
+            const isOnline = Boolean(p.isOnline);
+            const durationStr = p.onlineDuration || formatDuration(p.onlineSeconds);
+            return `
+              <div class="pioneer-row">
+                <div class="pioneer-row-main">
+                  <div class="pioneer-name-col">
+                    <span class="pioneer-rank">#${idx + 1}</span>
+                    <span class="pioneer-dot ${isOnline ? 'online' : ''}" title="${isOnline ? 'Online now' : 'Offline'}"></span>
+                    <span class="pioneer-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+                  </div>
+                  <span class="pioneer-duration">${durationStr}</span>
+                </div>
+                <div class="pioneer-bar-track">
+                  <div class="pioneer-bar-fill" style="width: ${pct}%"></div>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+          if (totalTimeEl) totalTimeEl.textContent = 'Total: ' + formatDuration(totalSec);
+          if (activeCountEl) activeCountEl.textContent = `${activePioneers.length} active pioneer${activePioneers.length === 1 ? '' : 's'}`;
         }
       }
 
