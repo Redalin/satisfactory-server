@@ -28,9 +28,9 @@ services:
       context: ./dashboard
     ports:
       - '3045:3045'
-    # Share PID namespace with satisfactory-server to directly monitor game process memory (e.g. 981MB) and CPU.
-    # This works out of the box in both Docker and Podman (rootless & rootful) without host socket permission issues.
-    pid: 'service:satisfactory-server'
+    # Use host PID namespace to directly monitor game process memory (e.g. 981MB) and CPU
+    # without coupling container lifecycles (so the dashboard stays online when satisfactory-server restarts).
+    pid: 'host'
     volumes:
       # Read-only mount of the server config directory for log tailing and save game scanning
       - satisfactory-data:/config:ro

@@ -187,6 +187,21 @@ func (p *LogParser) ProcessLogs() int {
 
 	active := p.FindActiveLogFile()
 	if active == "" {
+		if p.activePath != "" {
+			// Log file was removed (e.g. cleared by init.sh on container restart before SteamCMD update)
+			p.activePath = ""
+			p.lastOffset = 0
+			p.isGameRunning = false
+			p.sessionStartTime = time.Time{}
+			now := time.Now()
+			p.addEventLocked(LogEvent{
+				Timestamp:  now,
+				TimeString: now.Format("15:04:05"),
+				Category:   "server",
+				Message:    "Server restarting (updating / initializing game files)",
+			})
+			return 1
+		}
 		return 0
 	}
 
@@ -207,9 +222,11 @@ func (p *LogParser) ProcessLogs() int {
 		return 0
 	}
 
-	// Handle log truncation or rotation
+	// Handle log truncation or rotation (e.g. server restarted)
 	if fi.Size() < p.lastOffset {
 		p.lastOffset = 0
+		p.isGameRunning = false
+		p.sessionStartTime = time.Time{}
 	}
 
 	// If reading for the first time and the file is very large (> 2MB), start near the end

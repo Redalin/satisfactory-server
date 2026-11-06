@@ -280,9 +280,10 @@ func (app *ServerApp) startPersistenceWorker() {
 
 func (app *ServerApp) sampleMetrics() {
 	// 1. Health check Satisfactory HTTPS API
-	isHealthy, _, _ := app.apiClient.CheckHealth()
+	isHealthy, _, healthErr := app.apiClient.CheckHealth()
+	apiReachable := healthErr == nil
 
-	// 2. Query server state if token configured
+	// 2. Query server state if API is reachable
 	serverName := app.config.ServerName
 	var sessionName string
 	var apiPlayerCount = -1
@@ -297,33 +298,35 @@ func (app *ServerApp) sampleMetrics() {
 		playerLimit = 4
 	}
 
-	// 2. Query server state from Dedicated Server API
-	if stateResp, err := app.apiClient.QueryState(); err == nil && stateResp != nil {
-		isHealthy = true
-		if stateResp.Data.ServerName != "" {
-			serverName = stateResp.Data.ServerName
-		} else if stateResp.Data.ServerGameState.ServerName != "" {
-			serverName = stateResp.Data.ServerGameState.ServerName
+	// 2. Query server state from Dedicated Server API (only if port 7777 responded)
+	if apiReachable {
+		if stateResp, err := app.apiClient.QueryState(); err == nil && stateResp != nil {
+			isHealthy = true
+			if stateResp.Data.ServerName != "" {
+				serverName = stateResp.Data.ServerName
+			} else if stateResp.Data.ServerGameState.ServerName != "" {
+				serverName = stateResp.Data.ServerGameState.ServerName
+			}
+			sessionName = stateResp.Data.ServerGameState.ActiveSessionName
+			apiPlayerCount = stateResp.Data.ServerGameState.NumConnectedPlayers
+			if stateResp.Data.ServerGameState.PlayerLimit > 0 {
+				playerLimit = stateResp.Data.ServerGameState.PlayerLimit
+			}
+			isGameRunning = stateResp.Data.ServerGameState.IsGameRunning
+			totalGameDuration = stateResp.Data.ServerGameState.TotalGameDuration
+			techTier = stateResp.Data.ServerGameState.TechTier
+			activeSchematic = CleanSchematicName(stateResp.Data.ServerGameState.ActiveSchematic)
+			gamePhase = CleanGamePhase(stateResp.Data.ServerGameState.GamePhase)
+			averageTickRate = stateResp.Data.ServerGameState.AverageTickRate
 		}
-		sessionName = stateResp.Data.ServerGameState.ActiveSessionName
-		apiPlayerCount = stateResp.Data.ServerGameState.NumConnectedPlayers
-		if stateResp.Data.ServerGameState.PlayerLimit > 0 {
-			playerLimit = stateResp.Data.ServerGameState.PlayerLimit
-		}
-		isGameRunning = stateResp.Data.ServerGameState.IsGameRunning
-		totalGameDuration = stateResp.Data.ServerGameState.TotalGameDuration
-		techTier = stateResp.Data.ServerGameState.TechTier
-		activeSchematic = CleanSchematicName(stateResp.Data.ServerGameState.ActiveSchematic)
-		gamePhase = CleanGamePhase(stateResp.Data.ServerGameState.GamePhase)
-		averageTickRate = stateResp.Data.ServerGameState.AverageTickRate
-	}
 
-	if serverName == "" {
-		if opts, err := app.apiClient.QueryServerOptions(); err == nil && opts != nil {
-			for k, v := range opts {
-				if strings.Contains(strings.ToLower(k), "servername") && v != "" {
-					serverName = v
-					break
+		if serverName == "" {
+			if opts, err := app.apiClient.QueryServerOptions(); err == nil && opts != nil {
+				for k, v := range opts {
+					if strings.Contains(strings.ToLower(k), "servername") && v != "" {
+						serverName = v
+						break
+					}
 				}
 			}
 		}
@@ -333,10 +336,10 @@ func (app *ServerApp) sampleMetrics() {
 	if sessionName == "" {
 		sessionName = app.logParser.GetSessionName()
 	}
-	if !isGameRunning {
+	if !isGameRunning && isHealthy {
 		isGameRunning = app.logParser.IsGameRunning()
 	}
-	if totalGameDuration == 0 {
+	if totalGameDuration == 0 && isHealthy {
 		totalGameDuration = app.logParser.GetTotalGameDuration()
 	}
 

@@ -170,6 +170,13 @@ func (c *APIClient) tryPasswordLogin(privilege, password string) string {
 	return ""
 }
 
+// ResetSession clears any cached authentication token (e.g. when the server restarts)
+func (c *APIClient) ResetSession() {
+	c.mu.Lock()
+	c.sessionToken = ""
+	c.mu.Unlock()
+}
+
 // CheckHealth queries the unauthenticated HealthCheck endpoint
 func (c *APIClient) CheckHealth() (bool, string, error) {
 	reqBody := []byte(`{"function":"HealthCheck","data":{"clientCustomData":""}}`)
@@ -181,6 +188,7 @@ func (c *APIClient) CheckHealth() (bool, string, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.ResetSession()
 		return false, "offline", err
 	}
 	defer resp.Body.Close()

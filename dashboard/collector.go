@@ -411,7 +411,7 @@ func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 		}
 	}
 
-	// 2. Try shared PID namespace (/proc) to inspect FactoryServer directly
+	// 2. Try shared/host PID namespace (/proc) to inspect FactoryServer (or SteamCMD during updates) directly
 	if cpu, memUsed, memLimit, ok := c.collectFromProcesses(); ok {
 		c.mu.Lock()
 		c.engineType = "PID (Shared)"
@@ -422,6 +422,28 @@ func (c *Collector) CollectStats(playerCount int, isHealthy bool) MetricPoint {
 		if memLimit > 0 {
 			pt.MemoryPercent = (memUsed / memLimit) * 100.0
 		}
+		c.AddPoint(pt)
+		return pt
+	}
+
+	// If server is currently offline/restarting and we're monitoring a container via PID namespace,
+	// report 0 usage with the configured server memory limit rather than host-wide RAM.
+	if !isHealthy && (c.engineType == "PID (Shared)" || os.Getenv("SERVER_MEMORY_LIMIT_MB") != "") {
+		c.mu.Lock()
+		if c.engineType == "" {
+			c.engineType = "PID (Shared)"
+		}
+		c.mu.Unlock()
+		memLimitMB := 8192.0
+		if envLimit := os.Getenv("SERVER_MEMORY_LIMIT_MB"); envLimit != "" {
+			if val, err := strconv.ParseFloat(envLimit, 64); err == nil && val > 0 {
+				memLimitMB = val
+			}
+		}
+		pt.CPUPercent = 0
+		pt.MemoryUsedMB = 0
+		pt.MemoryLimitMB = round2(memLimitMB)
+		pt.MemoryPercent = 0
 		c.AddPoint(pt)
 		return pt
 	}
@@ -470,12 +492,13 @@ func (c *Collector) collectFromProcesses() (float64, float64, float64, bool) {
 		cmdlineBytes, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 		cmdline := string(cmdlineBytes)
 
-		// Check if it is the FactoryServer dedicated server or game process
+		// Check if it is the FactoryServer dedicated server, game process, or SteamCMD update process
 		isGame := strings.Contains(comm, "FactoryServer") ||
 			strings.Contains(comm, "FactoryGame") ||
 			strings.Contains(cmdline, "FactoryServer") ||
 			strings.Contains(cmdline, "FactoryGame") ||
-			(strings.Contains(cmdline, "satisfactory") && !strings.Contains(cmdline, "satisfactory-dashboard"))
+			(strings.Contains(comm, "steamcmd") && strings.Contains(cmdline, "1690800")) ||
+			(strings.Contains(cmdline, "steamcmd") && strings.Contains(cmdline, "1690800"))
 
 		if !isGame {
 			continue
